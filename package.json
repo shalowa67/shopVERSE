@@ -1,0 +1,14 @@
+{
+  "name": "shopverse",
+  "version": "1.0.0",
+  "description": "ShopVerse marketplace for shop owners and customers",
+  "main": "backend/server.js",
+  "scripts": {
+    "start": "node backend/server.js",
+    "dev": "node --watch backend/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
