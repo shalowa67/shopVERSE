@@ -431,6 +431,65 @@ test('customers can leave product reviews', async () => {
   assert.ok(product.reviewCount >= 1);
 });
 
+test('shop owners can upload product images and customize their shop profile', async () => {
+  const login = await request('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'owner@shopverse.com', password: '123456' })
+  });
+
+  assert.equal(login.response.status, 200, 'owner login should succeed');
+  const owner = JSON.parse(login.text);
+
+  const productImage = 'data:image/png;base64,AAAA';
+  const createProduct = await request('/api/products', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${owner.token}`
+    },
+    body: JSON.stringify({
+      name: 'Candle Collection',
+      description: 'Warm scented candles made in small batches.',
+      price: 29.95,
+      stock: 8,
+      image: productImage
+    })
+  });
+
+  assert.equal(createProduct.response.status, 201, 'product with image should be created');
+  const createdProduct = JSON.parse(createProduct.text);
+  assert.equal(createdProduct.product.image, productImage);
+
+  const profileUpdate = await request('/api/me', {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${owner.token}`
+    },
+    body: JSON.stringify({
+      shopName: 'Aisha Essentials Studio',
+      shopDescription: 'Handmade essentials for a calmer, more beautiful home.',
+      shopLocation: 'Abuja, Nigeria',
+      shopProfileImage: 'https://images.example.com/profile.png',
+      shopBannerImage: 'https://images.example.com/banner.png',
+      shopThemeColor: '#7c3aed'
+    })
+  });
+
+  assert.equal(profileUpdate.response.status, 200, 'shop profile update should succeed');
+  const profile = JSON.parse(profileUpdate.text);
+  assert.equal(profile.user.shopName, 'Aisha Essentials Studio');
+  assert.equal(profile.user.shopThemeColor, '#7c3aed');
+
+  const refreshedUser = await request('/api/me', {
+    headers: { Authorization: `Bearer ${owner.token}` }
+  });
+  const profileData = JSON.parse(refreshedUser.text);
+  assert.equal(profileData.user.shopProfileImage, 'https://images.example.com/profile.png');
+  assert.equal(profileData.user.shopBannerImage, 'https://images.example.com/banner.png');
+});
+
 test('registered accounts persist across server restarts', async () => {
   const dataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'shopverse-data-'));
   const dataFile = path.join(dataDirectory, 'shopverse.sqlite');

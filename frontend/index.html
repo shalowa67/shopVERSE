@@ -139,12 +139,65 @@
           <section id="ownerPanel" class="panel hidden owner-panel">
             <div class="panel-head split-head">
               <div>
-                <p class="eyebrow">Store management</p>
-                <h2>My products</h2>
+                <p class="eyebrow">Owner studio</p>
+                <h2>Your storefront</h2>
+                <p class="owner-panel-intro">Shape your shop, keep your catalog current, and follow incoming orders.</p>
               </div>
             </div>
 
+            <form id="shopProfileForm" class="stack-form shop-profile-form">
+              <div class="shop-profile-header">
+                <div>
+                  <p class="eyebrow">Brand storefront</p>
+                  <h3>Shop profile</h3>
+                </div>
+                <button type="submit" class="primary-button small-submit">Save profile</button>
+              </div>
+
+              <div class="field-row">
+                <label>
+                  <span>Shop name</span>
+                  <input type="text" name="shopName" placeholder="Your shop name" />
+                </label>
+              </div>
+
+              <div class="field-row">
+                <label>
+                  <span>Shop description</span>
+                  <textarea name="shopDescription" rows="3" placeholder="Tell shoppers what makes your shop special"></textarea>
+                </label>
+              </div>
+
+              <div class="field-row two-up">
+                <label>
+                  <span>Profile image</span>
+                  <input type="file" accept="image/*" name="shopProfileImageFile" />
+                </label>
+                <label>
+                  <span>Banner image</span>
+                  <input type="file" accept="image/*" name="shopBannerImageFile" />
+                </label>
+              </div>
+
+              <div class="field-row two-up">
+                <label>
+                  <span>Theme color</span>
+                  <input type="color" name="shopThemeColor" value="#4f46e5" />
+                </label>
+                <label>
+                  <span>Shop location</span>
+                  <input type="text" name="shopLocation" placeholder="e.g. Lagos, Nigeria" />
+                </label>
+              </div>
+            </form>
+
             <form id="productForm" class="stack-form">
+              <div class="owner-section-heading">
+                <div>
+                  <p class="eyebrow">Catalog</p>
+                  <h3>Add a product</h3>
+                </div>
+              </div>
               <div class="field-row inline-field">
                 <label>
                   <span>Product name</span>
@@ -161,6 +214,12 @@
                 <label>
                   <span>Stock</span>
                   <input type="number" min="1" name="stock" placeholder="Qty" required />
+                </label>
+              </div>
+              <div class="field-row">
+                <label>
+                  <span>Product image</span>
+                  <input type="file" accept="image/*" name="image" />
                 </label>
               </div>
               <div class="field-row">

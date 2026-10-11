@@ -27,6 +27,7 @@ const ordersList = document.getElementById('ordersList');
 const notificationsList = document.getElementById('notificationsList');
 const statsGrid = document.getElementById('statsGrid');
 const productForm = document.getElementById('productForm');
+const shopProfileForm = document.getElementById('shopProfileForm');
 const productFormSubmit = document.getElementById('productFormSubmit');
 const cancelProductEditBtn = document.getElementById('cancelProductEditBtn');
 const shopSearchInput = document.getElementById('shopSearchInput');
@@ -51,6 +52,27 @@ const formatMoney = (value) => new Intl.NumberFormat('en-ZM', {
   style: 'currency',
   currency: 'ZMW'
 }).format(Number(value || 0));
+
+const getProductImageMarkup = (product) => {
+  if (!product || !product.image) {
+    return '<div class="product-thumb placeholder-thumb">No image</div>';
+  }
+
+  return `<img class="product-thumb" src="${product.image}" alt="${product.name}" />`;
+};
+
+async function readFileAsDataUrl(file) {
+  if (!file || !file.size) {
+    return null;
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('The selected image could not be uploaded.'));
+    reader.readAsDataURL(file);
+  });
+}
 
 function saveSession(user, token) {
   localStorage.setItem(userSessionKey, JSON.stringify(user));
@@ -143,6 +165,17 @@ function renderUserBadge() {
   userBadge.classList.remove('hidden');
 }
 
+function populateShopProfileForm() {
+  if (!shopProfileForm || !state.user || state.user.role !== 'shop_owner') {
+    return;
+  }
+
+  shopProfileForm.elements.shopName.value = state.user.shopName || '';
+  shopProfileForm.elements.shopDescription.value = state.user.shopDescription || '';
+  shopProfileForm.elements.shopLocation.value = state.user.shopLocation || '';
+  shopProfileForm.elements.shopThemeColor.value = state.user.shopThemeColor || '#4f46e5';
+}
+
 function renderRoleSpecificUI() {
   if (!state.user) {
     cartPanel?.classList.add('hidden');
@@ -153,6 +186,7 @@ function renderRoleSpecificUI() {
   const isOwner = state.user.role === 'shop_owner';
   cartPanel?.classList.toggle('hidden', isOwner);
   ownerPanel?.classList.toggle('hidden', !isOwner);
+  populateShopProfileForm();
 
   const checkoutButton = document.getElementById('checkoutBtn');
   if (checkoutButton) {
@@ -167,12 +201,17 @@ function renderStats() {
     return;
   }
 
-  const cards = [
-    { label: 'Total shops', value: state.stats.totalShops },
-    { label: 'Products', value: state.stats.shopProductCount || 0 },
-    { label: 'Orders', value: state.stats.userOrderCount || 0 },
-    { label: 'Marketplace orders', value: state.stats.totalOrders || 0 }
-  ];
+  const cards = state.user?.role === 'shop_owner'
+    ? [
+        { label: 'Products listed', value: state.stats.shopProductCount || 0 },
+        { label: 'Orders received', value: state.stats.shopOrderCount || 0 },
+        { label: 'Shops on ShopVERSE', value: state.stats.totalShops || 0 }
+      ]
+    : [
+        { label: 'Total shops', value: state.stats.totalShops || 0 },
+        { label: 'Your orders', value: state.stats.userOrderCount || 0 },
+        { label: 'Marketplace orders', value: state.stats.totalOrders || 0 }
+      ];
 
   statsGrid.innerHTML = cards.map((card) => `
     <article class="stat-card">
@@ -183,25 +222,30 @@ function renderStats() {
 }
 
 function renderShops() {
+  shopsList.classList.add('shop-directory-grid');
   if (!state.shops.length) {
     shopsList.innerHTML = '<div class="empty-state">No shops have been created yet.</div>';
     return;
   }
 
   shopsList.innerHTML = state.shops.map((shop) => `
-    <article class="card-item">
-      <div>
-        <h3>${shop.name}</h3>
-        <div class="card-meta">
-          <span>${shop.owner}</span>
-          <span>${shop.productCount} products</span>
+    <article class="shop-listing-card" style="--shop-accent: ${shop.themeColor || '#4f46e5'};">
+      <div class="shop-listing-banner"${shop.bannerImage ? ` style="background-image: url('${shop.bannerImage}')"` : ''}></div>
+      <div class="shop-listing-body">
+        <div class="shop-identity">
+          ${shop.profileImage
+            ? `<img class="shop-avatar" src="${shop.profileImage}" alt="${shop.name} logo" />`
+            : `<div class="shop-avatar">${shop.name.charAt(0).toUpperCase()}</div>`}
+          <div class="shop-listing-title">
+            <h3>${shop.name}</h3>
+            <div class="card-meta"><span>${shop.owner}</span><span>${shop.productCount} products</span></div>
+          </div>
         </div>
-      </div>
-      <p>${shop.description || 'Shop owner has not added a description yet.'}</p>
-      <div class="shop-location">📍 ${shop.location || 'Location not set'}</div>
-      <div class="card-actions">
-        <span class="price-tag">Shop</span>
-        <button class="small-button" data-shop-id="${shop.id}">View items</button>
+        <p>${shop.description || 'Shop owner has not added a description yet.'}</p>
+        <div class="shop-listing-footer">
+          <span class="shop-location">${shop.location || 'Location not set'}</span>
+          <button class="small-button" data-shop-id="${shop.id}">Explore shop <span aria-hidden="true">→</span></button>
+        </div>
       </div>
     </article>
   `).join('');
@@ -233,7 +277,8 @@ async function openShop(shopId) {
         : '<div class="empty-state compact-empty">No reviews yet for this product.</div>';
 
       return `
-        <article class="card-item">
+        <article class="card-item product-card">
+          ${getProductImageMarkup(product)}
           <div>
             <h3>${product.name}</h3>
             <div class="card-meta">
@@ -270,17 +315,25 @@ async function openShop(shopId) {
       `;
     }).join('') : '<div class="empty-state">This shop is not selling any products yet.</div>';
 
+    shopsList.classList.remove('shop-directory-grid');
     shopsList.innerHTML = `
-      <div class="card-item">
-        <h3>${shop.name}</h3>
-        <div class="card-meta">
-          <span>${shop.owner}</span>
-          <span>${shop.products.length} products</span>
+      <div class="storefront-view">
+        <div class="shop-card" style="--shop-accent: ${shop.themeColor || '#4f46e5'};">
+          <div class="shop-banner"${shop.bannerImage ? ` style="background-image: url('${shop.bannerImage}')"` : ''}></div>
+          <div class="shop-card-body">
+            <div class="shop-identity">
+              ${shop.profileImage ? `<img class="shop-avatar" src="${shop.profileImage}" alt="${shop.name} logo" />` : `<div class="shop-avatar">${shop.name.charAt(0).toUpperCase()}</div>`}
+              <div>
+                <h3>${shop.name}</h3>
+                <div class="card-meta"><span>${shop.owner}</span><span>${shop.products.length} products</span></div>
+              </div>
+            </div>
+            <p>${shop.description || 'Shop owner has not added a description yet.'}</p>
+            <div class="shop-location detail-location">${shop.location || 'Location not set'}</div>
+          </div>
         </div>
-        <p>${shop.description}</p>
-        <div class="shop-location detail-location">📍 ${shop.location || 'Location not set'}</div>
+        <div class="product-grid">${products}</div>
       </div>
-      ${products}
     `;
 
     shopsList.querySelectorAll('[data-product-id]').forEach((button) => {
@@ -598,6 +651,7 @@ async function loadOwnerProducts() {
 
 function renderOwnerProducts() {
   const productsToRender = state.ownerProducts || [];
+  ownerProducts.classList.add('product-grid');
 
   if (!productsToRender.length) {
     ownerProducts.innerHTML = '<div class="empty-state">You have not added any products yet.</div>';
@@ -606,6 +660,7 @@ function renderOwnerProducts() {
 
   ownerProducts.innerHTML = productsToRender.map((product) => `
     <article class="card-item">
+      ${getProductImageMarkup(product)}
       <div>
         <h3>${product.name}</h3>
         <div class="card-meta">
@@ -635,6 +690,9 @@ function renderOwnerProducts() {
 
 function resetProductForm() {
   productForm.reset();
+  if (productForm.elements.image) {
+    productForm.elements.image.value = '';
+  }
   delete productForm.dataset.editProductId;
   productFormSubmit.textContent = 'Add product';
   cancelProductEditBtn.classList.add('hidden');
@@ -794,6 +852,47 @@ function renderLoggedOut() {
   renderRoleSpecificUI();
 }
 
+async function handleShopProfileSubmit(event) {
+  event.preventDefault();
+
+  if (!state.user || state.user.role !== 'shop_owner') {
+    return;
+  }
+
+  try {
+    const formData = new FormData(shopProfileForm);
+    const profileFile = formData.get('shopProfileImageFile');
+    const bannerFile = formData.get('shopBannerImageFile');
+    const payload = {
+      shopName: formData.get('shopName') || state.user.shopName,
+      shopDescription: formData.get('shopDescription') || state.user.shopDescription,
+      shopLocation: formData.get('shopLocation') || state.user.shopLocation,
+      shopThemeColor: formData.get('shopThemeColor') || state.user.shopThemeColor || '#4f46e5'
+    };
+
+    if (profileFile && profileFile.size) {
+      payload.shopProfileImage = await readFileAsDataUrl(profileFile);
+    }
+
+    if (bannerFile && bannerFile.size) {
+      payload.shopBannerImage = await readFileAsDataUrl(bannerFile);
+    }
+
+    const result = await apiRequest('/api/me', {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    });
+
+    state.user = result.user;
+    saveSession(result.user, getStoredToken());
+    populateShopProfileForm();
+    await loadDashboard();
+    alert('Shop profile updated successfully.');
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 async function handleProductSubmit(event) {
   event.preventDefault();
   const formData = new FormData(productForm);
@@ -801,14 +900,21 @@ async function handleProductSubmit(event) {
   const isEditing = Boolean(productForm.dataset.editProductId);
 
   try {
+    const nextPayload = {
+      name: payload.name,
+      description: payload.description,
+      price: Number(payload.price),
+      stock: Number(payload.stock)
+    };
+
+    const imageFile = productForm.elements.image && productForm.elements.image.files[0];
+    if (imageFile && imageFile.size) {
+      nextPayload.image = await readFileAsDataUrl(imageFile);
+    }
+
     const options = {
       method: isEditing ? 'PUT' : 'POST',
-      body: JSON.stringify({
-        name: payload.name,
-        description: payload.description,
-        price: Number(payload.price),
-        stock: Number(payload.stock)
-      })
+      body: JSON.stringify(nextPayload)
     };
 
     const route = isEditing ? `/api/products/${productForm.dataset.editProductId}` : '/api/products';
@@ -842,6 +948,9 @@ async function initializeApp() {
 
   authForm.addEventListener('submit', handleAuthSubmit);
   logoutBtn.addEventListener('click', renderLoggedOut);
+  if (shopProfileForm) {
+    shopProfileForm.addEventListener('submit', handleShopProfileSubmit);
+  }
   productForm.addEventListener('submit', handleProductSubmit);
   cancelProductEditBtn.addEventListener('click', resetProductForm);
   shopSearchInput?.addEventListener('input', async (event) => {

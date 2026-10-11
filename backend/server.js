@@ -156,8 +156,25 @@ const sanitizeUser = (user) => ({
   role: user.role,
   shopName: user.shopName || null,
   shopDescription: user.shopDescription || null,
-  shopLocation: user.shopLocation || null
+  shopLocation: user.shopLocation || null,
+  shopProfileImage: user.shopProfileImage || null,
+  shopBannerImage: user.shopBannerImage || null,
+  shopThemeColor: user.shopThemeColor || '#4f46e5'
 });
+
+const normalizeImageValue = (value) => {
+  const image = String(value || '').trim();
+
+  if (!image) {
+    return null;
+  }
+
+  if (/^data:image\//i.test(image) || /^https?:\/\//i.test(image)) {
+    return image;
+  }
+
+  return null;
+};
 
 const createNotification = (userId, type, message) => {
   const notification = {
@@ -235,7 +252,18 @@ app.get('/api/health', (req, res) => {
 });
 
 app.post('/api/register', (req, res) => {
-  const { name, email, password, role, shopName, shopDescription, shopLocation } = req.body || {};
+  const {
+    name,
+    email,
+    password,
+    role,
+    shopName,
+    shopDescription,
+    shopLocation,
+    shopProfileImage,
+    shopBannerImage,
+    shopThemeColor
+  } = req.body || {};
 
   if (!name || !email || !password || !role) {
     return res.status(400).json({ success: false, message: 'Name, email, password, and role are required.' });
@@ -261,7 +289,10 @@ app.post('/api/register', (req, res) => {
     role,
     shopName: role === 'shop_owner' ? shopName : null,
     shopDescription: role === 'shop_owner' ? shopDescription || 'Welcome to my shop.' : null,
-    shopLocation: role === 'shop_owner' ? shopLocation : null
+    shopLocation: role === 'shop_owner' ? shopLocation : null,
+    shopProfileImage: role === 'shop_owner' ? normalizeImageValue(shopProfileImage) : null,
+    shopBannerImage: role === 'shop_owner' ? normalizeImageValue(shopBannerImage) : null,
+    shopThemeColor: role === 'shop_owner' ? (/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/.test(String(shopThemeColor || '#4f46e5')) ? String(shopThemeColor) : '#4f46e5') : '#4f46e5'
   };
 
   users.push(user);
@@ -292,6 +323,52 @@ app.get('/api/me', authMiddleware, (req, res) => {
   res.json({ success: true, user: sanitizeUser(req.user) });
 });
 
+app.patch('/api/me', authMiddleware, (req, res) => {
+  const updates = req.body || {};
+
+  if (req.user.role === 'shop_owner') {
+    if (updates.shopName !== undefined) {
+      const nextShopName = String(updates.shopName || '').trim();
+      if (!nextShopName) {
+        return res.status(400).json({ success: false, message: 'Shop name cannot be empty.' });
+      }
+      req.user.shopName = nextShopName;
+    }
+
+    if (updates.shopDescription !== undefined) {
+      req.user.shopDescription = String(updates.shopDescription || '').trim() || 'Welcome to my shop.';
+    }
+
+    if (updates.shopLocation !== undefined) {
+      req.user.shopLocation = String(updates.shopLocation || '').trim() || null;
+    }
+
+    if (updates.shopProfileImage !== undefined) {
+      req.user.shopProfileImage = normalizeImageValue(updates.shopProfileImage) || null;
+    }
+
+    if (updates.shopBannerImage !== undefined) {
+      req.user.shopBannerImage = normalizeImageValue(updates.shopBannerImage) || null;
+    }
+
+    if (updates.shopThemeColor !== undefined) {
+      const nextTheme = String(updates.shopThemeColor || '#4f46e5').trim();
+      req.user.shopThemeColor = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/.test(nextTheme) ? nextTheme : '#4f46e5';
+    }
+  }
+
+  if (updates.name !== undefined && String(updates.name || '').trim()) {
+    req.user.name = String(updates.name).trim();
+  }
+
+  if (updates.email !== undefined && String(updates.email || '').trim()) {
+    req.user.email = String(updates.email).trim();
+  }
+
+  persistAppState();
+  res.json({ success: true, user: sanitizeUser(req.user) });
+});
+
 app.get('/api/shops', (req, res) => {
   const searchTerm = String(req.query.search || '').trim().toLowerCase();
 
@@ -311,6 +388,9 @@ app.get('/api/shops', (req, res) => {
       description: shop.shopDescription,
       owner: shop.name,
       location: shop.shopLocation || 'Location not set',
+      profileImage: shop.shopProfileImage || null,
+      bannerImage: shop.shopBannerImage || null,
+      themeColor: shop.shopThemeColor || '#4f46e5',
       productCount: getShopProducts(shop.id).length
     }));
 
@@ -332,6 +412,9 @@ app.get('/api/shops/:shopId', (req, res) => {
       description: shop.shopDescription,
       owner: shop.name,
       location: shop.shopLocation || 'Location not set',
+      profileImage: shop.shopProfileImage || null,
+      bannerImage: shop.shopBannerImage || null,
+      themeColor: shop.shopThemeColor || '#4f46e5',
       products: getShopProducts(shop.id).map(addProductMeta)
     }
   });
@@ -397,7 +480,7 @@ app.post('/api/products', authMiddleware, (req, res) => {
     return res.status(403).json({ success: false, message: 'Only shop owners can add products.' });
   }
 
-  const { name, description, price, stock } = req.body || {};
+  const { name, description, price, stock, image } = req.body || {};
 
   if (!name || !price || !stock) {
     return res.status(400).json({ success: false, message: 'Product name, price, and stock are required.' });
@@ -410,6 +493,7 @@ app.post('/api/products', authMiddleware, (req, res) => {
     description: description || '',
     price: Number(price),
     stock: Number(stock),
+    image: normalizeImageValue(image) || null,
     createdAt: new Date().toISOString()
   };
 
@@ -663,6 +747,9 @@ app.get('/api/shop-orders', authMiddleware, (req, res) => {
 
 app.get('/api/dashboard', authMiddleware, (req, res) => {
   const shopProductCount = products.filter((item) => item.shopId === req.user.id).length;
+  const shopOrderCount = orders.filter((order) =>
+    order.items.some((item) => item.shopId === req.user.id)
+  ).length;
   const userOrderCount = orders.filter((order) => order.customerId === req.user.id).length;
 
   res.json({
@@ -670,6 +757,7 @@ app.get('/api/dashboard', authMiddleware, (req, res) => {
     stats: {
       role: req.user.role,
       shopProductCount,
+      shopOrderCount,
       userOrderCount,
       totalShops: users.filter((user) => user.role === 'shop_owner').length,
       totalOrders: orders.length
@@ -692,7 +780,7 @@ app.put('/api/products/:productId', authMiddleware, (req, res) => {
     return res.status(403).json({ success: false, message: 'You can only edit your own products.' });
   }
 
-  const { name, description, price, stock } = req.body || {};
+  const { name, description, price, stock, image } = req.body || {};
 
   if (!name || price === undefined || stock === undefined) {
     return res.status(400).json({ success: false, message: 'Product name, price, and stock are required.' });
@@ -702,6 +790,7 @@ app.put('/api/products/:productId', authMiddleware, (req, res) => {
   product.description = description ?? product.description;
   product.price = Number(price);
   product.stock = Number(stock);
+  product.image = normalizeImageValue(image) ?? product.image ?? null;
 
   persistAppState();
   res.json({ success: true, product });
