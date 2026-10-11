@@ -30,9 +30,9 @@ const shopDescriptionField = document.getElementById('shopDescriptionField');
 const userSessionKey = 'shopverse-user';
 const tokenKey = 'shopverse-token';
 
-const formatMoney = (value) => new Intl.NumberFormat('en-US', {
+const formatMoney = (value) => new Intl.NumberFormat('en-ZM', {
   style: 'currency',
-  currency: 'USD'
+  currency: 'ZMW'
 }).format(Number(value || 0));
 
 function saveSession(user, token) {

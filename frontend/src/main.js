@@ -6,7 +6,10 @@ const state = {
   ownerProducts: [],
   cart: { items: [], subtotal: 0 },
   orders: [],
-  stats: null
+  stats: null,
+  notifications: [],
+  shopSearchTerm: '',
+  activeShopId: null
 };
 
 const authSection = document.getElementById('authSection');
@@ -21,13 +24,17 @@ const cartPanel = document.querySelector('.cart-panel');
 const ownerPanel = document.getElementById('ownerPanel');
 const ownerProducts = document.getElementById('ownerProducts');
 const ordersList = document.getElementById('ordersList');
+const notificationsList = document.getElementById('notificationsList');
 const statsGrid = document.getElementById('statsGrid');
 const productForm = document.getElementById('productForm');
 const productFormSubmit = document.getElementById('productFormSubmit');
 const cancelProductEditBtn = document.getElementById('cancelProductEditBtn');
+const shopSearchInput = document.getElementById('shopSearchInput');
 const checkoutModal = document.getElementById('checkoutModal');
 const checkoutItems = document.getElementById('checkoutItems');
 const checkoutTotal = document.getElementById('checkoutTotal');
+const shippingAddressInput = document.getElementById('shippingAddressInput');
+const paymentMethodSelect = document.getElementById('paymentMethodSelect');
 const confirmCheckoutBtn = document.getElementById('confirmCheckoutBtn');
 const cancelCheckoutBtn = document.getElementById('cancelCheckoutBtn');
 const closeCheckoutModalBtn = document.getElementById('closeCheckoutModalBtn');
@@ -35,13 +42,14 @@ const authSubmitButton = document.getElementById('authSubmitButton');
 const roleField = document.getElementById('roleField');
 const shopNameField = document.getElementById('shopNameField');
 const shopDescriptionField = document.getElementById('shopDescriptionField');
+const shopLocationField = document.getElementById('shopLocationField');
 
 const userSessionKey = 'shopverse-user';
 const tokenKey = 'shopverse-token';
 
-const formatMoney = (value) => new Intl.NumberFormat('en-US', {
+const formatMoney = (value) => new Intl.NumberFormat('en-ZM', {
   style: 'currency',
-  currency: 'USD'
+  currency: 'ZMW'
 }).format(Number(value || 0));
 
 function saveSession(user, token) {
@@ -71,7 +79,8 @@ function setAuthMode(mode) {
   const fields = [
     { element: roleField, visible: mode === 'register' },
     { element: shopNameField, visible: mode === 'register' },
-    { element: shopDescriptionField, visible: mode === 'register' }
+    { element: shopDescriptionField, visible: mode === 'register' },
+    { element: shopLocationField, visible: mode === 'register' }
   ];
 
   fields.forEach(({ element, visible }) => {
@@ -189,6 +198,7 @@ function renderShops() {
         </div>
       </div>
       <p>${shop.description || 'Shop owner has not added a description yet.'}</p>
+      <div class="shop-location">📍 ${shop.location || 'Location not set'}</div>
       <div class="card-actions">
         <span class="price-tag">Shop</span>
         <button class="small-button" data-shop-id="${shop.id}">View items</button>
@@ -203,23 +213,62 @@ function renderShops() {
 
 async function openShop(shopId) {
   try {
+    state.activeShopId = shopId;
     const { shop } = await apiRequest(`/api/shops/${shopId}`);
-    const products = shop.products.length ? shop.products.map((product) => `
-      <article class="card-item">
-        <div>
-          <h3>${product.name}</h3>
-          <div class="card-meta">
-            <span>In stock: ${product.stock}</span>
-            <span>${shop.name}</span>
+    const products = shop.products.length ? shop.products.map((product) => {
+      const reviewSummary = product.reviewCount
+        ? `${product.averageRating.toFixed(1)} ★ (${product.reviewCount} reviews)`
+        : 'No ratings yet';
+
+      const customerReviews = product.reviews && product.reviews.length
+        ? product.reviews.slice(0, 2).map((review) => `
+            <div class="review-item">
+              <div class="review-head">
+                <strong>${review.customerName}</strong>
+                <span>${'★'.repeat(review.rating)}${'☆'.repeat(5 - review.rating)}</span>
+              </div>
+              <p>${review.comment}</p>
+            </div>
+          `).join('')
+        : '<div class="empty-state compact-empty">No reviews yet for this product.</div>';
+
+      return `
+        <article class="card-item">
+          <div>
+            <h3>${product.name}</h3>
+            <div class="card-meta">
+              <span>In stock: ${product.stock}</span>
+              <span>${shop.name}</span>
+            </div>
           </div>
-        </div>
-        <p>${product.description || 'No description provided.'}</p>
-        <div class="card-actions">
-          <span class="price-tag">${formatMoney(product.price)}</span>
-          <button class="primary-button" data-product-id="${product.id}">Add to cart</button>
-        </div>
-      </article>
-    `).join('') : '<div class="empty-state">This shop is not selling any products yet.</div>';
+          <p>${product.description || 'No description provided.'}</p>
+          <div class="review-summary">${reviewSummary}</div>
+          <div class="review-list">${customerReviews}</div>
+          ${state.user && state.user.role === 'customer' ? `
+            <form class="review-form" data-review-product-id="${product.id}">
+              <div class="review-form-row">
+                <label>
+                  <span>Rating</span>
+                  <select name="rating">
+                    <option value="5">5 ★</option>
+                    <option value="4">4 ★</option>
+                    <option value="3">3 ★</option>
+                    <option value="2">2 ★</option>
+                    <option value="1">1 ★</option>
+                  </select>
+                </label>
+              </div>
+              <textarea name="comment" rows="2" placeholder="Share your experience"></textarea>
+              <button type="submit" class="small-button">Leave review</button>
+            </form>
+          ` : ''}
+          <div class="card-actions">
+            <span class="price-tag">${formatMoney(product.price)}</span>
+            <button class="primary-button" data-product-id="${product.id}">Add to cart</button>
+          </div>
+        </article>
+      `;
+    }).join('') : '<div class="empty-state">This shop is not selling any products yet.</div>';
 
     shopsList.innerHTML = `
       <div class="card-item">
@@ -229,12 +278,17 @@ async function openShop(shopId) {
           <span>${shop.products.length} products</span>
         </div>
         <p>${shop.description}</p>
+        <div class="shop-location detail-location">📍 ${shop.location || 'Location not set'}</div>
       </div>
       ${products}
     `;
 
     shopsList.querySelectorAll('[data-product-id]').forEach((button) => {
       button.addEventListener('click', () => addToCart(button.dataset.productId));
+    });
+
+    shopsList.querySelectorAll('.review-form').forEach((form) => {
+      form.addEventListener('submit', handleReviewSubmit);
     });
   } catch (error) {
     alert(error.message);
@@ -243,8 +297,9 @@ async function openShop(shopId) {
 
 async function loadDashboard() {
   try {
+    const shopQuery = state.shopSearchTerm ? `?search=${encodeURIComponent(state.shopSearchTerm)}` : '';
     const [shopsResult, statsResult] = await Promise.all([
-      apiRequest('/api/shops'),
+      apiRequest(`/api/shops${shopQuery}`),
       apiRequest('/api/dashboard')
     ]);
 
@@ -255,6 +310,62 @@ async function loadDashboard() {
     loadCart();
     loadOrders();
     loadOwnerProducts();
+    loadNotifications();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function loadNotifications() {
+  try {
+    const result = await apiRequest('/api/notifications');
+    state.notifications = result.notifications || [];
+    renderNotifications();
+  } catch (error) {
+    state.notifications = [];
+    renderNotifications();
+  }
+}
+
+function renderNotifications() {
+  if (!state.notifications.length) {
+    notificationsList.innerHTML = '<div class="empty-state">No notifications yet.</div>';
+    return;
+  }
+
+  notificationsList.innerHTML = state.notifications.map((item) => `
+    <div class="mini-item notification-item">
+      <div>
+        <strong>${item.type}</strong>
+        <div class="card-meta">
+          <span>${new Date(item.createdAt).toLocaleString()}</span>
+        </div>
+      </div>
+      <span class="notification-message">${item.message}</span>
+    </div>
+  `).join('');
+}
+
+async function handleReviewSubmit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const productId = form.dataset.reviewProductId;
+  const rating = Number(form.elements.rating.value);
+  const comment = form.elements.comment.value.trim();
+
+  if (!productId) {
+    return;
+  }
+
+  try {
+    await apiRequest(`/api/products/${productId}/reviews`, {
+      method: 'POST',
+      body: JSON.stringify({ rating, comment })
+    });
+
+    if (state.activeShopId) {
+      await openShop(state.activeShopId);
+    }
   } catch (error) {
     alert(error.message);
   }
@@ -287,7 +398,12 @@ function renderCart() {
           <span>${item.shopName}</span>
         </div>
       </div>
-      <button class="small-button" data-remove-product="${item.productId}">Remove</button>
+      <div class="inline-button-row compact-row">
+        <button class="small-button" data-cart-quantity="${item.productId}" data-direction="-1">-</button>
+        <span class="qty-pill">${item.quantity}</span>
+        <button class="small-button" data-cart-quantity="${item.productId}" data-direction="1">+</button>
+        <button class="small-button" data-remove-product="${item.productId}">Remove</button>
+      </div>
     </div>
   `).join('');
 
@@ -295,6 +411,10 @@ function renderCart() {
 
   cartList.querySelectorAll('[data-remove-product]').forEach((button) => {
     button.addEventListener('click', () => removeCartItem(button.dataset.removeProduct));
+  });
+
+  cartList.querySelectorAll('[data-cart-quantity]').forEach((button) => {
+    button.addEventListener('click', () => adjustCartQuantity(button.dataset.cartQuantity, Number(button.dataset.direction)));
   });
 }
 
@@ -311,6 +431,25 @@ async function addToCart(productId) {
   }
 }
 
+async function adjustCartQuantity(productId, direction) {
+  try {
+    const currentItem = state.cart.items.find((item) => item.productId === productId);
+    if (!currentItem) {
+      return;
+    }
+
+    const nextQuantity = currentItem.quantity + direction;
+    await apiRequest('/api/cart/update', {
+      method: 'POST',
+      body: JSON.stringify({ productId, quantity: nextQuantity })
+    });
+    await loadCart();
+    renderCheckoutModal();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 async function removeCartItem(productId) {
   try {
     await apiRequest('/api/cart/remove', {
@@ -318,6 +457,9 @@ async function removeCartItem(productId) {
       body: JSON.stringify({ productId })
     });
     await loadCart();
+    if (checkoutModal && !checkoutModal.classList.contains('hidden')) {
+      renderCheckoutModal();
+    }
   } catch (error) {
     alert(error.message);
   }
@@ -330,10 +472,23 @@ async function placeOrder() {
       return;
     }
 
-    const result = await apiRequest('/api/orders', { method: 'POST' });
+    const shippingAddress = (shippingAddressInput?.value || '').trim();
+    if (!shippingAddress) {
+      alert('Please add a delivery address before placing the order.');
+      shippingAddressInput?.focus();
+      return;
+    }
+
+    const paymentMethod = paymentMethodSelect?.value || 'zanaco_card';
+
+    const result = await apiRequest('/api/orders', {
+      method: 'POST',
+      body: JSON.stringify({ shippingAddress, paymentMethod })
+    });
     await loadCart();
     await loadOrders();
     await loadDashboard();
+    await loadNotifications();
     closeCheckoutModal();
     alert(`Order placed successfully! Total: ${formatMoney(result.order.total)}`);
   } catch (error) {
@@ -353,34 +508,81 @@ async function loadOrders() {
   }
 }
 
+async function updateOrderStatus(orderId, status) {
+  try {
+    await apiRequest(`/api/orders/${orderId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status })
+    });
+    await loadOrders();
+    await loadDashboard();
+    await loadNotifications();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 function renderOrders() {
   if (!state.orders.length) {
     ordersList.innerHTML = '<div class="empty-state">No orders yet.</div>';
     return;
   }
 
-  ordersList.innerHTML = state.orders.map((order) => `
-    <article class="card-item">
-      <div>
-        <h3>Order #${order.id.slice(0, 8)}</h3>
-        <div class="card-meta">
-          <span>${new Date(order.createdAt).toLocaleDateString()}</span>
-          <span>${order.status}</span>
-        </div>
-      </div>
-      <div class="mini-list">
-        ${order.items.map((item) => `
-          <div class="mini-item">
-            <span>${item.productName} x ${item.quantity}</span>
-            <strong>${formatMoney(item.price * item.quantity)}</strong>
+  ordersList.innerHTML = state.orders.map((order) => {
+    const statusSelect = state.user?.role === 'shop_owner' ? `
+      <label class="order-status-control">
+        <span>Status</span>
+        <select data-order-status-select="${order.id}">
+          <option value="pending" ${order.status === 'pending' ? 'selected' : ''}>Pending</option>
+          <option value="confirmed" ${order.status === 'confirmed' ? 'selected' : ''}>Confirmed</option>
+          <option value="packed" ${order.status === 'packed' ? 'selected' : ''}>Packed</option>
+          <option value="shipped" ${order.status === 'shipped' ? 'selected' : ''}>Shipped</option>
+          <option value="delivered" ${order.status === 'delivered' ? 'selected' : ''}>Delivered</option>
+        </select>
+      </label>
+    ` : `
+      <div class="order-status-badge">${order.status}</div>
+    `;
+
+    return `
+      <article class="card-item">
+        <div>
+          <h3>Order #${order.id.slice(0, 8)}</h3>
+          <div class="card-meta">
+            <span>${new Date(order.createdAt).toLocaleDateString()}</span>
+            <span>${order.status}</span>
           </div>
-        `).join('')}
-      </div>
-      <div class="card-actions">
-        <span class="price-tag">Total: ${formatMoney(order.total)}</span>
-      </div>
-    </article>
-  `).join('');
+        </div>
+        <div class="mini-list">
+          ${order.items.map((item) => `
+            <div class="mini-item">
+              <span>${item.productName} x ${item.quantity}</span>
+              <strong>${formatMoney(item.price * item.quantity)}</strong>
+            </div>
+          `).join('')}
+        </div>
+        <div class="order-meta-block">
+          <strong>Delivery:</strong>
+          <span>${order.shippingAddress || 'No shipping address provided.'}</span>
+        </div>
+        <div class="order-meta-block">
+          <strong>Payment:</strong>
+          <span>${order.paymentMethod} · ${order.paymentStatus}</span>
+        </div>
+        ${statusSelect}
+        <div class="card-actions">
+          <span class="price-tag">Total: ${formatMoney(order.total)}</span>
+        </div>
+      </article>
+    `;
+  }).join('');
+
+  ordersList.querySelectorAll('[data-order-status-select]').forEach((select) => {
+    select.addEventListener('change', async (event) => {
+      const orderId = event.target.dataset.orderStatusSelect;
+      await updateOrderStatus(orderId, event.target.value);
+    });
+  });
 }
 
 async function loadOwnerProducts() {
@@ -508,11 +710,23 @@ function openCheckoutModal() {
     return;
   }
 
+  if (shippingAddressInput) {
+    shippingAddressInput.value = '';
+  }
+  if (paymentMethodSelect) {
+    paymentMethodSelect.value = 'zanaco_card';
+  }
   renderCheckoutModal();
   checkoutModal.classList.remove('hidden');
 }
 
 function closeCheckoutModal() {
+  if (shippingAddressInput) {
+    shippingAddressInput.value = '';
+  }
+  if (paymentMethodSelect) {
+    paymentMethodSelect.value = 'zanaco_card';
+  }
   checkoutModal.classList.add('hidden');
 }
 
@@ -547,7 +761,8 @@ async function handleAuthSubmit(event) {
         password: payload.password,
         role: payload.role,
         shopName: payload.shopName,
-        shopDescription: payload.shopDescription
+        shopDescription: payload.shopDescription,
+        shopLocation: payload.shopLocation
       })
     });
 
@@ -629,6 +844,10 @@ async function initializeApp() {
   logoutBtn.addEventListener('click', renderLoggedOut);
   productForm.addEventListener('submit', handleProductSubmit);
   cancelProductEditBtn.addEventListener('click', resetProductForm);
+  shopSearchInput?.addEventListener('input', async (event) => {
+    state.shopSearchTerm = event.target.value.trim();
+    await loadDashboard();
+  });
   closeCheckoutModalBtn.addEventListener('click', closeCheckoutModal);
   cancelCheckoutBtn.addEventListener('click', closeCheckoutModal);
   confirmCheckoutBtn.addEventListener('click', placeOrder);

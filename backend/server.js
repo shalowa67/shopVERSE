@@ -1,14 +1,26 @@
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
+const { createStore } = require('./storage');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const persistenceEnabled = process.env.NODE_ENV !== 'test' && process.env.SHOPVERSE_DISABLE_PERSISTENCE !== 'true';
+const dataFilePath = process.env.SHOPVERSE_DATA_FILE || path.join(__dirname, 'data', 'shopverse.sqlite');
+const legacyDataFilePath = process.env.SHOPVERSE_LEGACY_DATA_FILE || path.join(__dirname, 'data', 'shopverse.json');
+const store = persistenceEnabled ? createStore(dataFilePath, legacyDataFilePath) : null;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
 
-const users = [
+const users = [];
+const products = [];
+const carts = {};
+const orders = [];
+const productReviews = [];
+const notifications = [];
+
+const seedUsers = [
   {
     id: 'shop-owner-demo',
     name: 'Aisha Hassan',
@@ -16,7 +28,8 @@ const users = [
     password: '123456',
     role: 'shop_owner',
     shopName: 'Aisha Essentials',
-    shopDescription: 'andpicked home and lifestyle goods for everyday livingH.'
+    shopDescription: 'Handpicked home and lifestyle goods for everyday living.',
+    shopLocation: 'Kano, Nigeria'
   },
   {
     id: 'customer-demo',
@@ -27,7 +40,7 @@ const users = [
   }
 ];
 
-const products = [
+const seedProducts = [
   {
     id: 'prod-1',
     shopId: 'shop-owner-demo',
@@ -57,11 +70,84 @@ const products = [
   }
 ];
 
-const carts = {};
-const orders = [];
+const hashPassword = (password) => {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `scrypt$${salt}$${hash}`;
+};
+
+const passwordMatches = (password, storedPassword) => {
+  const [algorithm, salt, storedHash] = String(storedPassword || '').split('$');
+
+  if (algorithm !== 'scrypt' || !salt || !storedHash) {
+    return false;
+  }
+
+  const candidateHash = crypto.scryptSync(password, salt, 64);
+  const expectedHash = Buffer.from(storedHash, 'hex');
+  return candidateHash.length === expectedHash.length && crypto.timingSafeEqual(candidateHash, expectedHash);
+};
+
+const resetAppState = () => {
+  users.length = 0;
+  products.length = 0;
+  Object.keys(carts).forEach((cartKey) => delete carts[cartKey]);
+  orders.length = 0;
+  productReviews.length = 0;
+  notifications.length = 0;
+
+  seedUsers.forEach((user) => users.push({ ...user, password: hashPassword(user.password) }));
+  seedProducts.forEach((product) => products.push({ ...product }));
+};
+
+const persistAppState = () => {
+  if (!store) {
+    return;
+  }
+
+  store.save({ users, products, carts, orders, productReviews, notifications });
+};
+
+const restoreAppState = () => {
+  const savedState = store ? store.load() : null;
+
+  if (!savedState || savedState.users.length === 0) {
+    resetAppState();
+    persistAppState();
+    return;
+  }
+
+  users.push(...savedState.users);
+  products.push(...savedState.products);
+  Object.assign(carts, savedState.carts);
+  orders.push(...savedState.orders);
+  productReviews.push(...savedState.productReviews);
+  notifications.push(...savedState.notifications);
+};
+
+restoreAppState();
 
 const getProductById = (productId) => products.find((entry) => entry.id === productId);
 const getShopById = (shopId) => users.find((user) => user.id === shopId && user.role === 'shop_owner');
+
+const getProductReviewList = (productId) => productReviews
+  .filter((entry) => entry.productId === productId)
+  .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+const addProductMeta = (product) => {
+  const reviews = getProductReviewList(product.id);
+  const reviewCount = reviews.length;
+  const averageRating = reviewCount > 0
+    ? reviews.reduce((sum, review) => sum + Number(review.rating), 0) / reviewCount
+    : 0;
+
+  return {
+    ...product,
+    reviews,
+    reviewCount,
+    averageRating: Number(averageRating.toFixed(1))
+  };
+};
 
 const sanitizeUser = (user) => ({
   id: user.id,
@@ -69,8 +155,23 @@ const sanitizeUser = (user) => ({
   email: user.email,
   role: user.role,
   shopName: user.shopName || null,
-  shopDescription: user.shopDescription || null
+  shopDescription: user.shopDescription || null,
+  shopLocation: user.shopLocation || null
 });
+
+const createNotification = (userId, type, message) => {
+  const notification = {
+    id: crypto.randomUUID(),
+    userId,
+    type,
+    message,
+    read: false,
+    createdAt: new Date().toISOString()
+  };
+
+  notifications.push(notification);
+  return notification;
+};
 
 const getUserByEmail = (email) => users.find((user) => user.email.toLowerCase() === email.toLowerCase());
 const getShopProducts = (shopId) => products.filter((product) => product.shopId === shopId);
@@ -107,12 +208,34 @@ const getCartItems = (userId) => {
   });
 };
 
+const validOrderStatuses = ['pending', 'confirmed', 'packed', 'shipped', 'delivered'];
+const validPaymentMethods = [
+  'card',
+  'visa',
+  'mastercard',
+  'zambia_credit_card',
+  'zanaco_card',
+  'standard_chartered_card',
+  'mtn_mobile_money',
+  'airtel_money',
+  'zamtel_money',
+  'wallet',
+  'bank_transfer'
+];
+
+const normalizeOrderStatus = (status) => {
+  const value = String(status || 'pending').trim().toLowerCase();
+  return validOrderStatuses.includes(value) ? value : 'pending';
+};
+
+const isCardPayment = (paymentMethod) => ['card', 'visa', 'mastercard', 'zambia_credit_card', 'zanaco_card', 'standard_chartered_card'].includes(paymentMethod);
+
 app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'ShopVerse API is running.' });
 });
 
 app.post('/api/register', (req, res) => {
-  const { name, email, password, role, shopName, shopDescription } = req.body || {};
+  const { name, email, password, role, shopName, shopDescription, shopLocation } = req.body || {};
 
   if (!name || !email || !password || !role) {
     return res.status(400).json({ success: false, message: 'Name, email, password, and role are required.' });
@@ -126,6 +249,10 @@ app.post('/api/register', (req, res) => {
     return res.status(400).json({ success: false, message: 'Shop owners must provide a shop name.' });
   }
 
+  if (role === 'shop_owner' && !shopLocation) {
+    return res.status(400).json({ success: false, message: 'Shop owners must provide a shop location so customers can find them.' });
+  }
+
   const user = {
     id: crypto.randomUUID(),
     name,
@@ -133,11 +260,14 @@ app.post('/api/register', (req, res) => {
     password,
     role,
     shopName: role === 'shop_owner' ? shopName : null,
-    shopDescription: role === 'shop_owner' ? shopDescription || 'Welcome to my shop.' : null
+    shopDescription: role === 'shop_owner' ? shopDescription || 'Welcome to my shop.' : null,
+    shopLocation: role === 'shop_owner' ? shopLocation : null
   };
 
   users.push(user);
+  user.password = hashPassword(user.password);
   const token = user.id;
+  persistAppState();
 
   res.status(201).json({ success: true, token, user: sanitizeUser(user) });
 });
@@ -151,7 +281,7 @@ app.post('/api/login', (req, res) => {
 
   const user = getUserByEmail(email);
 
-  if (!user || user.password !== password) {
+  if (!user || !passwordMatches(password, user.password)) {
     return res.status(401).json({ success: false, message: 'Invalid email or password.' });
   }
 
@@ -163,13 +293,24 @@ app.get('/api/me', authMiddleware, (req, res) => {
 });
 
 app.get('/api/shops', (req, res) => {
+  const searchTerm = String(req.query.search || '').trim().toLowerCase();
+
   const shops = users
     .filter((user) => user.role === 'shop_owner')
+    .filter((shop) => {
+      if (!searchTerm) {
+        return true;
+      }
+
+      const searchableText = [shop.shopName, shop.shopDescription, shop.shopLocation, shop.name].join(' ').toLowerCase();
+      return searchableText.includes(searchTerm);
+    })
     .map((shop) => ({
       id: shop.id,
       name: shop.shopName,
       description: shop.shopDescription,
       owner: shop.name,
+      location: shop.shopLocation || 'Location not set',
       productCount: getShopProducts(shop.id).length
     }));
 
@@ -190,7 +331,8 @@ app.get('/api/shops/:shopId', (req, res) => {
       name: shop.shopName,
       description: shop.shopDescription,
       owner: shop.name,
-      products: getShopProducts(shop.id)
+      location: shop.shopLocation || 'Location not set',
+      products: getShopProducts(shop.id).map(addProductMeta)
     }
   });
 });
@@ -199,12 +341,55 @@ app.get('/api/products', (req, res) => {
   const productList = products.map((product) => {
     const shop = users.find((user) => user.id === product.shopId);
     return {
-      ...product,
+      ...addProductMeta(product),
       shopName: shop ? shop.shopName : 'Unknown shop'
     };
   });
 
   res.json({ success: true, products: productList });
+});
+
+app.get('/api/products/:productId/reviews', (req, res) => {
+  const product = getProductById(req.params.productId);
+
+  if (!product) {
+    return res.status(404).json({ success: false, message: 'Product not found.' });
+  }
+
+  res.json({ success: true, reviews: getProductReviewList(product.id) });
+});
+
+app.post('/api/products/:productId/reviews', authMiddleware, (req, res) => {
+  if (req.user.role !== 'customer') {
+    return res.status(403).json({ success: false, message: 'Only customers can leave product reviews.' });
+  }
+
+  const product = getProductById(req.params.productId);
+
+  if (!product) {
+    return res.status(404).json({ success: false, message: 'Product not found.' });
+  }
+
+  const { rating, comment } = req.body || {};
+  const parsedRating = Number(rating);
+
+  if (!Number.isInteger(parsedRating) || parsedRating < 1 || parsedRating > 5) {
+    return res.status(400).json({ success: false, message: 'Rating must be a whole number from 1 to 5.' });
+  }
+
+  const review = {
+    id: crypto.randomUUID(),
+    productId: product.id,
+    customerId: req.user.id,
+    customerName: req.user.name,
+    rating: parsedRating,
+    comment: String(comment || '').trim() || 'No comment provided.',
+    createdAt: new Date().toISOString()
+  };
+
+  productReviews.push(review);
+  persistAppState();
+  res.status(201).json({ success: true, review });
 });
 
 app.post('/api/products', authMiddleware, (req, res) => {
@@ -229,6 +414,7 @@ app.post('/api/products', authMiddleware, (req, res) => {
   };
 
   products.push(product);
+  persistAppState();
   res.status(201).json({ success: true, product });
 });
 
@@ -237,7 +423,7 @@ app.get('/api/my-products', authMiddleware, (req, res) => {
     return res.status(403).json({ success: false, message: 'Only shop owners can view this list.' });
   }
 
-  res.json({ success: true, products: getShopProducts(req.user.id) });
+  res.json({ success: true, products: getShopProducts(req.user.id).map(addProductMeta) });
 });
 
 app.get('/api/cart', authMiddleware, (req, res) => {
@@ -286,6 +472,7 @@ app.post('/api/cart/add', authMiddleware, (req, res) => {
     carts[req.user.id].items.push({ productId, quantity: requestedQuantity });
   }
 
+  persistAppState();
   res.json({ success: true, cart: carts[req.user.id] });
 });
 
@@ -302,6 +489,49 @@ app.post('/api/cart/remove', authMiddleware, (req, res) => {
   }
 
   cart.items = cart.items.filter((item) => item.productId !== productId);
+  persistAppState();
+  res.json({ success: true, cart });
+});
+
+app.post('/api/cart/update', authMiddleware, (req, res) => {
+  if (req.user.role !== 'customer') {
+    return res.status(403).json({ success: false, message: 'Only customers can manage the cart.' });
+  }
+
+  const { productId, quantity } = req.body || {};
+  const cart = carts[req.user.id];
+
+  if (!cart) {
+    return res.json({ success: true, cart: { items: [] } });
+  }
+
+  const item = cart.items.find((entry) => entry.productId === productId);
+  if (!item) {
+    return res.status(404).json({ success: false, message: 'Item not found in cart.' });
+  }
+
+  const product = getProductById(productId);
+  if (!product) {
+    return res.status(404).json({ success: false, message: 'Product not found.' });
+  }
+
+  const nextQuantity = Number(quantity);
+  if (!Number.isFinite(nextQuantity) || nextQuantity < 0) {
+    return res.status(400).json({ success: false, message: 'Quantity must be zero or greater.' });
+  }
+
+  if (nextQuantity === 0) {
+    cart.items = cart.items.filter((entry) => entry.productId !== productId);
+    persistAppState();
+    return res.json({ success: true, cart });
+  }
+
+  if (nextQuantity > product.stock) {
+    return res.status(400).json({ success: false, message: 'Not enough stock available for this product.' });
+  }
+
+  item.quantity = nextQuantity;
+  persistAppState();
   res.json({ success: true, cart });
 });
 
@@ -314,6 +544,18 @@ app.post('/api/orders', authMiddleware, (req, res) => {
 
   if (!cart || cart.items.length === 0) {
     return res.status(400).json({ success: false, message: 'Your cart is empty.' });
+  }
+
+  const { shippingAddress, paymentMethod } = req.body || {};
+  const normalizedAddress = String(shippingAddress || '').trim();
+  const normalizedPaymentMethod = String(paymentMethod || 'card').trim().toLowerCase();
+
+  if (!normalizedAddress) {
+    return res.status(400).json({ success: false, message: 'A delivery address is required before placing an order.' });
+  }
+
+  if (!validPaymentMethods.includes(normalizedPaymentMethod)) {
+    return res.status(400).json({ success: false, message: 'Please choose a valid payment method.' });
   }
 
   const preparedItems = [];
@@ -348,13 +590,46 @@ app.post('/api/orders', authMiddleware, (req, res) => {
     items: preparedItems,
     total,
     status: 'pending',
+    paymentMethod: normalizedPaymentMethod,
+    paymentStatus: 'pending',
+    shippingAddress: normalizedAddress,
     createdAt: new Date().toISOString()
   };
 
   orders.push(order);
   carts[req.user.id] = { items: [] };
 
+  createNotification(req.user.id, 'order', `Order #${order.id.slice(0, 8)} placed. Payment is pending.`);
+  preparedItems.forEach((item) => {
+    createNotification(item.shopId, 'sale', `New order received for ${item.productName}.`);
+  });
+
+  persistAppState();
   res.status(201).json({ success: true, order });
+});
+
+app.patch('/api/orders/:orderId/status', authMiddleware, (req, res) => {
+  if (req.user.role !== 'shop_owner') {
+    return res.status(403).json({ success: false, message: 'Only shop owners can update order status.' });
+  }
+
+  const order = orders.find((entry) => entry.id === req.params.orderId);
+
+  if (!order) {
+    return res.status(404).json({ success: false, message: 'Order not found.' });
+  }
+
+  const status = normalizeOrderStatus(req.body?.status);
+  const orderBelongsToShop = order.items.some((item) => item.shopId === req.user.id);
+
+  if (!orderBelongsToShop) {
+    return res.status(403).json({ success: false, message: 'You can only update orders for your shop.' });
+  }
+
+  order.status = status;
+  createNotification(order.customerId, 'status', `Your order #${order.id.slice(0, 8)} is now ${status}.`);
+  persistAppState();
+  res.json({ success: true, order });
 });
 
 app.get('/api/my-orders', authMiddleware, (req, res) => {
@@ -364,6 +639,14 @@ app.get('/api/my-orders', authMiddleware, (req, res) => {
 
   const customerOrders = orders.filter((order) => order.customerId === req.user.id);
   res.json({ success: true, orders: customerOrders });
+});
+
+app.get('/api/notifications', authMiddleware, (req, res) => {
+  const userNotifications = notifications
+    .filter((notification) => notification.userId === req.user.id)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  res.json({ success: true, notifications: userNotifications });
 });
 
 app.get('/api/shop-orders', authMiddleware, (req, res) => {
@@ -420,6 +703,7 @@ app.put('/api/products/:productId', authMiddleware, (req, res) => {
   product.price = Number(price);
   product.stock = Number(stock);
 
+  persistAppState();
   res.json({ success: true, product });
 });
 
@@ -446,6 +730,7 @@ app.delete('/api/products/:productId', authMiddleware, (req, res) => {
     cart.items = (cart.items || []).filter((item) => item.productId !== product.id);
   });
 
+  persistAppState();
   res.json({ success: true, message: 'Product deleted successfully.' });
 });
 
@@ -459,4 +744,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, users, products, carts, orders };
+module.exports = { app, users, products, carts, orders, productReviews, resetAppState };

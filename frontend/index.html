@@ -87,6 +87,13 @@
               </label>
             </div>
 
+            <div class="field-row hide" id="shopLocationField">
+              <label>
+                <span>Shop location</span>
+                <input type="text" name="shopLocation" placeholder="e.g. Lagos, Nigeria" />
+              </label>
+            </div>
+
             <button type="submit" class="primary-button" id="authSubmitButton">Login</button>
           </form>
         </section>
@@ -102,6 +109,14 @@
                   <h2>Browse shops</h2>
                 </div>
               </div>
+
+              <div class="field-row search-field">
+                <label>
+                  <span>Search shops</span>
+                  <input id="shopSearchInput" type="search" placeholder="Search by name, owner, or category" />
+                </label>
+              </div>
+
               <div id="shopsList" class="card-list"></div>
             </section>
 
@@ -115,7 +130,7 @@
               <div id="cartList" class="mini-list"></div>
               <div class="cart-summary">
                 <span>Subtotal</span>
-                <strong id="cartTotal">$0.00</strong>
+                <strong id="cartTotal">ZK 0.00</strong>
               </div>
               <button id="checkoutBtn" class="primary-button full-width">Place order</button>
             </aside>
@@ -172,6 +187,16 @@
             </div>
             <div id="ordersList" class="card-list"></div>
           </section>
+
+          <section id="notificationsPanel" class="panel">
+            <div class="panel-head split-head">
+              <div>
+                <p class="eyebrow">Alert center</p>
+                <h2>Notifications</h2>
+              </div>
+            </div>
+            <div id="notificationsList" class="mini-list"></div>
+          </section>
         </section>
       </main>
     </div>
@@ -188,9 +213,34 @@
 
         <div id="checkoutItems" class="mini-list"></div>
 
+        <div class="field-row" style="margin-top: 18px;">
+          <label>
+            <span>Delivery address</span>
+            <textarea id="shippingAddressInput" rows="3" placeholder="Enter the delivery address for this order"></textarea>
+          </label>
+        </div>
+
+        <div class="field-row" style="margin-top: 14px;">
+          <label>
+            <span>Payment method</span>
+            <select id="paymentMethodSelect">
+              <option value="zanaco_card">Zanaco Card</option>
+              <option value="zambia_credit_card">Zambian Credit Card</option>
+              <option value="visa">Visa Card</option>
+              <option value="mastercard">Mastercard</option>
+              <option value="mtn_mobile_money">MTN Mobile Money</option>
+              <option value="airtel_money">Airtel Money</option>
+              <option value="zamtel_money">Zamtel Money</option>
+              <option value="wallet">Wallet</option>
+              <option value="bank_transfer">Bank Transfer</option>
+            </select>
+          </label>
+        </div>
+        <p class="payment-notice">Payments are not connected yet. Orders will remain unpaid until a provider is configured.</p>
+
         <div class="checkout-total">
           <span>Total</span>
-          <strong id="checkoutTotal">$0.00</strong>
+          <strong id="checkoutTotal">ZK 0.00</strong>
         </div>
 
         <div class="modal-actions">

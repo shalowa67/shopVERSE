@@ -330,6 +330,23 @@ h1 {
   font-size: 1.05rem;
 }
 
+.search-field {
+  margin-top: 18px;
+  margin-bottom: 8px;
+}
+
+.qty-pill {
+  min-width: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: var(--primary-dark);
+  font-weight: 700;
+}
+
 .full-width {
   width: 100%;
   margin-top: 18px;
@@ -356,6 +373,121 @@ h1 {
   padding: 18px;
   border-radius: 14px;
   background: #f8fafc;
+}
+
+.shop-location {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  background: #eef2ff;
+  color: var(--primary-dark);
+  font-weight: 700;
+  padding: 7px 10px;
+  border-radius: 999px;
+}
+
+.detail-location {
+  margin-top: 4px;
+}
+
+.review-summary {
+  color: var(--primary-dark);
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+
+.review-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.review-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #f8fafc;
+}
+
+.review-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--primary-dark);
+  margin-bottom: 6px;
+}
+
+.review-item p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.review-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.review-form-row label {
+  display: grid;
+  gap: 8px;
+}
+
+.review-form textarea,
+.review-form select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.compact-empty {
+  padding: 12px;
+}
+
+.order-status-control {
+  display: grid;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.order-status-control select {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.order-status-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: #ecfeff;
+  color: #0f766e;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.order-meta-block {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.notification-item {
+  display: grid;
+  gap: 6px;
+}
+
+.notification-message {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .modal-overlay {
@@ -392,6 +524,16 @@ h1 {
   padding-top: 16px;
   border-top: 1px solid var(--border);
   font-size: 1.1rem;
+}
+
+.payment-notice {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid #b45309;
+  background: #fffbeb;
+  color: #78350f;
+  font-size: 0.9rem;
+  line-height: 1.45;
 }
 
 .modal-actions {
