@@ -11,9 +11,35 @@ const { DatabaseSync } = require('node:sqlite');
 const { createStore } = require('../backend/storage');
 
 const { app, resetAppState } = require('../backend/server');
+const { handleSessionError } = require('../frontend/src/main.js');
 
 beforeEach(() => {
   resetAppState();
+});
+
+test('stale session tokens are cleared and user is forced back to login', () => {
+  const storage = {
+    values: { 'shopverse-user': '{"id":"123"}', 'shopverse-token': 'stale-token' },
+    getItem(key) {
+      return Object.prototype.hasOwnProperty.call(this.values, key) ? this.values[key] : null;
+    },
+    setItem(key, value) {
+      this.values[key] = String(value);
+    },
+    removeItem(key) {
+      delete this.values[key];
+    }
+  };
+
+  let reloadCalled = false;
+  const result = handleSessionError(new Error('Invalid session token.'), storage, () => {
+    reloadCalled = true;
+  });
+
+  assert.equal(result, true);
+  assert.equal(storage.getItem('shopverse-user'), null);
+  assert.equal(storage.getItem('shopverse-token'), null);
+  assert.equal(reloadCalled, true);
 });
 
 async function request(path, options = {}) {
