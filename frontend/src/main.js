@@ -12,38 +12,38 @@ const state = {
   activeShopId: null
 };
 
-const authSection = document.getElementById('authSection');
-const appSection = document.getElementById('appSection');
-const authForm = document.getElementById('authForm');
-const logoutBtn = document.getElementById('logoutBtn');
-const userBadge = document.getElementById('userBadge');
-const shopsList = document.getElementById('shopsList');
-const cartList = document.getElementById('cartList');
-const cartTotal = document.getElementById('cartTotal');
-const cartPanel = document.querySelector('.cart-panel');
-const ownerPanel = document.getElementById('ownerPanel');
-const ownerProducts = document.getElementById('ownerProducts');
-const ordersList = document.getElementById('ordersList');
-const notificationsList = document.getElementById('notificationsList');
-const statsGrid = document.getElementById('statsGrid');
-const productForm = document.getElementById('productForm');
-const shopProfileForm = document.getElementById('shopProfileForm');
-const productFormSubmit = document.getElementById('productFormSubmit');
-const cancelProductEditBtn = document.getElementById('cancelProductEditBtn');
-const shopSearchInput = document.getElementById('shopSearchInput');
-const checkoutModal = document.getElementById('checkoutModal');
-const checkoutItems = document.getElementById('checkoutItems');
-const checkoutTotal = document.getElementById('checkoutTotal');
-const shippingAddressInput = document.getElementById('shippingAddressInput');
-const paymentMethodSelect = document.getElementById('paymentMethodSelect');
-const confirmCheckoutBtn = document.getElementById('confirmCheckoutBtn');
-const cancelCheckoutBtn = document.getElementById('cancelCheckoutBtn');
-const closeCheckoutModalBtn = document.getElementById('closeCheckoutModalBtn');
-const authSubmitButton = document.getElementById('authSubmitButton');
-const roleField = document.getElementById('roleField');
-const shopNameField = document.getElementById('shopNameField');
-const shopDescriptionField = document.getElementById('shopDescriptionField');
-const shopLocationField = document.getElementById('shopLocationField');
+const authSection = typeof document !== 'undefined' ? document.getElementById('authSection') : null;
+const appSection = typeof document !== 'undefined' ? document.getElementById('appSection') : null;
+const authForm = typeof document !== 'undefined' ? document.getElementById('authForm') : null;
+const logoutBtn = typeof document !== 'undefined' ? document.getElementById('logoutBtn') : null;
+const userBadge = typeof document !== 'undefined' ? document.getElementById('userBadge') : null;
+const shopsList = typeof document !== 'undefined' ? document.getElementById('shopsList') : null;
+const cartList = typeof document !== 'undefined' ? document.getElementById('cartList') : null;
+const cartTotal = typeof document !== 'undefined' ? document.getElementById('cartTotal') : null;
+const cartPanel = typeof document !== 'undefined' ? document.querySelector('.cart-panel') : null;
+const ownerPanel = typeof document !== 'undefined' ? document.getElementById('ownerPanel') : null;
+const ownerProducts = typeof document !== 'undefined' ? document.getElementById('ownerProducts') : null;
+const ordersList = typeof document !== 'undefined' ? document.getElementById('ordersList') : null;
+const notificationsList = typeof document !== 'undefined' ? document.getElementById('notificationsList') : null;
+const statsGrid = typeof document !== 'undefined' ? document.getElementById('statsGrid') : null;
+const productForm = typeof document !== 'undefined' ? document.getElementById('productForm') : null;
+const shopProfileForm = typeof document !== 'undefined' ? document.getElementById('shopProfileForm') : null;
+const productFormSubmit = typeof document !== 'undefined' ? document.getElementById('productFormSubmit') : null;
+const cancelProductEditBtn = typeof document !== 'undefined' ? document.getElementById('cancelProductEditBtn') : null;
+const shopSearchInput = typeof document !== 'undefined' ? document.getElementById('shopSearchInput') : null;
+const checkoutModal = typeof document !== 'undefined' ? document.getElementById('checkoutModal') : null;
+const checkoutItems = typeof document !== 'undefined' ? document.getElementById('checkoutItems') : null;
+const checkoutTotal = typeof document !== 'undefined' ? document.getElementById('checkoutTotal') : null;
+const shippingAddressInput = typeof document !== 'undefined' ? document.getElementById('shippingAddressInput') : null;
+const paymentMethodSelect = typeof document !== 'undefined' ? document.getElementById('paymentMethodSelect') : null;
+const confirmCheckoutBtn = typeof document !== 'undefined' ? document.getElementById('confirmCheckoutBtn') : null;
+const cancelCheckoutBtn = typeof document !== 'undefined' ? document.getElementById('cancelCheckoutBtn') : null;
+const closeCheckoutModalBtn = typeof document !== 'undefined' ? document.getElementById('closeCheckoutModalBtn') : null;
+const authSubmitButton = typeof document !== 'undefined' ? document.getElementById('authSubmitButton') : null;
+const roleField = typeof document !== 'undefined' ? document.getElementById('roleField') : null;
+const shopNameField = typeof document !== 'undefined' ? document.getElementById('shopNameField') : null;
+const shopDescriptionField = typeof document !== 'undefined' ? document.getElementById('shopDescriptionField') : null;
+const shopLocationField = typeof document !== 'undefined' ? document.getElementById('shopLocationField') : null;
 
 const userSessionKey = 'shopverse-user';
 const tokenKey = 'shopverse-token';
@@ -75,22 +75,55 @@ async function readFileAsDataUrl(file) {
 }
 
 function saveSession(user, token) {
+  if (typeof localStorage === 'undefined') {
+    return;
+  }
+
   localStorage.setItem(userSessionKey, JSON.stringify(user));
   localStorage.setItem(tokenKey, token);
 }
 
-function clearSession() {
-  localStorage.removeItem(userSessionKey);
-  localStorage.removeItem(tokenKey);
+function clearSession(storage = typeof localStorage !== 'undefined' ? localStorage : null) {
+  if (!storage) {
+    return;
+  }
+
+  storage.removeItem(userSessionKey);
+  storage.removeItem(tokenKey);
 }
 
-function getStoredUser() {
-  const stored = localStorage.getItem(userSessionKey);
+function getStoredUser(storage = typeof localStorage !== 'undefined' ? localStorage : null) {
+  if (!storage) {
+    return null;
+  }
+
+  const stored = storage.getItem(userSessionKey);
   return stored ? JSON.parse(stored) : null;
 }
 
-function getStoredToken() {
-  return localStorage.getItem(tokenKey);
+function getStoredToken(storage = typeof localStorage !== 'undefined' ? localStorage : null) {
+  if (!storage) {
+    return null;
+  }
+
+  return storage.getItem(tokenKey);
+}
+
+function handleSessionError(error, storage = typeof localStorage !== 'undefined' ? localStorage : null, onReload = () => {
+  if (typeof window !== 'undefined' && typeof window.location !== 'undefined') {
+    window.location.reload();
+  }
+}) {
+  const message = error && error.message ? String(error.message).toLowerCase() : '';
+  const shouldReset = message.includes('invalid session token') || message.includes('authentication required');
+
+  if (!shouldReset) {
+    return false;
+  }
+
+  clearSession(storage);
+  onReload();
+  return true;
 }
 
 function setAuthMode(mode) {
@@ -147,7 +180,9 @@ async function apiRequest(path, options = {}) {
   }
 
   if (!response.ok) {
-    throw new Error(result.message || 'Request failed.');
+    const error = new Error(result.message || 'Request failed.');
+    handleSessionError(error);
+    throw error;
   }
 
   return result;
@@ -964,4 +999,16 @@ async function initializeApp() {
   setAuthMode('login');
 }
 
-initializeApp();
+if (typeof document !== 'undefined') {
+  initializeApp();
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    handleSessionError,
+    clearSession,
+    getStoredUser,
+    getStoredToken,
+    saveSession
+  };
+}
