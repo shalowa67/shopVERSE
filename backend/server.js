@@ -10,7 +10,7 @@ const dataFilePath = process.env.SHOPVERSE_DATA_FILE || path.join(__dirname, 'da
 const legacyDataFilePath = process.env.SHOPVERSE_LEGACY_DATA_FILE || path.join(__dirname, 'data', 'shopverse.json');
 const store = persistenceEnabled ? createStore(dataFilePath, legacyDataFilePath) : null;
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
 
 const users = [];
@@ -825,6 +825,18 @@ app.delete('/api/products/:productId', authMiddleware, (req, res) => {
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'frontend', 'index.html'));
+});
+
+app.use((error, req, res, next) => {
+  if (error.type === 'entity.too.large') {
+    return res.status(413).json({ success: false, message: 'Request is too large. Please use an image under 7 MB.' });
+  }
+
+  if (error.type === 'entity.parse.failed') {
+    return res.status(400).json({ success: false, message: 'Request body must contain valid JSON.' });
+  }
+
+  return next(error);
 });
 
 if (require.main === module) {

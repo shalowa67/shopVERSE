@@ -522,7 +522,7 @@ test('shop owners can upload product images and customize their shop profile', a
   assert.equal(login.response.status, 200, 'owner login should succeed');
   const owner = JSON.parse(login.text);
 
-  const productImage = 'data:image/png;base64,AAAA';
+  const productImage = `data:image/png;base64,${'A'.repeat(160 * 1024)}`;
   const createProduct = await request('/api/products', {
     method: 'POST',
     headers: {
