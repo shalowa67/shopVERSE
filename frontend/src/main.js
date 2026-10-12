@@ -126,6 +126,12 @@ function handleSessionError(error, storage = typeof localStorage !== 'undefined'
   return true;
 }
 
+function reportApiError(error) {
+  if (!handleSessionError(error)) {
+    alert(error.message);
+  }
+}
+
 function setAuthMode(mode) {
   state.activeMode = mode;
   const tabs = document.querySelectorAll('.tab-button');
@@ -379,7 +385,7 @@ async function openShop(shopId) {
       form.addEventListener('submit', handleReviewSubmit);
     });
   } catch (error) {
-    alert(error.message);
+    reportApiError(error);
   }
 }
 
@@ -400,7 +406,7 @@ async function loadDashboard() {
     loadOwnerProducts();
     loadNotifications();
   } catch (error) {
-    alert(error.message);
+    reportApiError(error);
   }
 }
 
@@ -455,7 +461,7 @@ async function handleReviewSubmit(event) {
       await openShop(state.activeShopId);
     }
   } catch (error) {
-    alert(error.message);
+    reportApiError(error);
   }
 }
 
@@ -515,7 +521,7 @@ async function addToCart(productId) {
     await loadCart();
     alert('Product added to cart.');
   } catch (error) {
-    alert(error.message);
+    reportApiError(error);
   }
 }
 
@@ -534,7 +540,7 @@ async function adjustCartQuantity(productId, direction) {
     await loadCart();
     renderCheckoutModal();
   } catch (error) {
-    alert(error.message);
+    reportApiError(error);
   }
 }
 
@@ -549,7 +555,7 @@ async function removeCartItem(productId) {
       renderCheckoutModal();
     }
   } catch (error) {
-    alert(error.message);
+    reportApiError(error);
   }
 }
 
@@ -580,7 +586,7 @@ async function placeOrder() {
     closeCheckoutModal();
     alert(`Order placed successfully! Total: ${formatMoney(result.order.total)}`);
   } catch (error) {
-    alert(error.message);
+    reportApiError(error);
   }
 }
 
@@ -606,7 +612,7 @@ async function updateOrderStatus(orderId, status) {
     await loadDashboard();
     await loadNotifications();
   } catch (error) {
-    alert(error.message);
+    reportApiError(error);
   }
 }
 
@@ -768,7 +774,7 @@ async function deleteProduct(productId) {
     await loadDashboard();
     alert('Product deleted successfully.');
   } catch (error) {
-    alert(error.message);
+    reportApiError(error);
   }
 }
 
@@ -840,7 +846,7 @@ async function handleAuthSubmit(event) {
       state.user = result.user;
       afterLogin();
     } catch (error) {
-      alert(error.message);
+      reportApiError(error);
     }
     return;
   }
@@ -863,7 +869,7 @@ async function handleAuthSubmit(event) {
     state.user = result.user;
     afterLogin();
   } catch (error) {
-    alert(error.message);
+    reportApiError(error);
   }
 }
 
@@ -924,7 +930,7 @@ async function handleShopProfileSubmit(event) {
     await loadDashboard();
     alert('Shop profile updated successfully.');
   } catch (error) {
-    alert(error.message);
+    reportApiError(error);
   }
 }
 
@@ -959,7 +965,7 @@ async function handleProductSubmit(event) {
     await loadDashboard();
     alert(isEditing ? 'Product updated successfully.' : 'Product successfully added to your shop.');
   } catch (error) {
-    alert(error.message);
+    reportApiError(error);
   }
 }
 
@@ -1009,6 +1015,8 @@ if (typeof module !== 'undefined' && module.exports) {
     clearSession,
     getStoredUser,
     getStoredToken,
-    saveSession
+    saveSession,
+    loadDashboard,
+    reportApiError
   };
 }

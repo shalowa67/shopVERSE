@@ -11,7 +11,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { createStore } = require('../backend/storage');
 
 const { app, resetAppState } = require('../backend/server');
-const { handleSessionError } = require('../frontend/src/main.js');
+const { handleSessionError, loadDashboard } = require('../frontend/src/main.js');
 
 beforeEach(() => {
   resetAppState();
@@ -40,6 +40,61 @@ test('stale session tokens are cleared and user is forced back to login', () => 
   assert.equal(storage.getItem('shopverse-user'), null);
   assert.equal(storage.getItem('shopverse-token'), null);
   assert.equal(reloadCalled, true);
+});
+
+test('stale session errors are handled without triggering an alert loop', async () => {
+  const storage = {
+    values: { 'shopverse-user': '{"id":"123"}', 'shopverse-token': 'stale-token' },
+    getItem(key) {
+      return Object.prototype.hasOwnProperty.call(this.values, key) ? this.values[key] : null;
+    },
+    setItem(key, value) {
+      this.values[key] = String(value);
+    },
+    removeItem(key) {
+      delete this.values[key];
+    }
+  };
+
+  const oldLocalStorage = global.localStorage;
+  const oldAlert = global.alert;
+  const oldWindow = global.window;
+  const oldFetch = global.fetch;
+
+  let reloadCalled = false;
+  let alertCalled = false;
+
+  try {
+    global.localStorage = storage;
+    global.alert = () => {
+      alertCalled = true;
+    };
+    global.window = {
+      location: {
+        reload: () => {
+          reloadCalled = true;
+        }
+      }
+    };
+
+    global.fetch = async () => ({
+      ok: false,
+      status: 401,
+      text: async () => JSON.stringify({ message: 'Invalid session token.' })
+    });
+
+    await loadDashboard();
+
+    assert.equal(alertCalled, false);
+    assert.equal(storage.getItem('shopverse-user'), null);
+    assert.equal(storage.getItem('shopverse-token'), null);
+    assert.equal(reloadCalled, true);
+  } finally {
+    global.localStorage = oldLocalStorage;
+    global.alert = oldAlert;
+    global.window = oldWindow;
+    global.fetch = oldFetch;
+  }
 });
 
 async function request(path, options = {}) {
