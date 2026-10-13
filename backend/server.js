@@ -207,6 +207,8 @@ const sanitizeUser = (user) => ({
   shopThemeColor: user.shopThemeColor || '#4f46e5'
 });
 
+const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+
 const normalizeImageValue = (value) => {
   const image = String(value || '').trim();
 
@@ -214,8 +216,17 @@ const normalizeImageValue = (value) => {
     return null;
   }
 
-  if (/^data:image\//i.test(image) || /^https?:\/\//i.test(image)) {
+  if (/^data:image\/(png|jpe?g|gif|webp);base64,[a-z0-9+/]+={0,2}$/i.test(image)) {
     return image;
+  }
+
+  if (/^https?:\/\//i.test(image)) {
+    try {
+      const parsed = new URL(image);
+      return ['http:', 'https:'].includes(parsed.protocol) ? image : null;
+    } catch (error) {
+      return null;
+    }
   }
 
   return null;
@@ -331,6 +342,14 @@ app.post('/api/register', asyncRoute(async (req, res) => {
     return res.status(400).json({ success: false, message: 'Name, email, password, and role are required.' });
   }
 
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ success: false, message: 'Please provide a valid email address.' });
+  }
+
+  if (String(password).length < 6) {
+    return res.status(400).json({ success: false, message: 'Password must be at least 6 characters long.' });
+  }
+
   if (getUserByEmail(email)) {
     return res.status(409).json({ success: false, message: 'An account with that email already exists.' });
   }
@@ -370,6 +389,10 @@ app.post('/api/login', asyncRoute(async (req, res) => {
 
   if (!email || !password) {
     return res.status(400).json({ success: false, message: 'Email and password are required.' });
+  }
+
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ success: false, message: 'Please provide a valid email address.' });
   }
 
   const user = getUserByEmail(email);
@@ -429,7 +452,11 @@ app.patch('/api/me', authMiddleware, asyncRoute(async (req, res) => {
   }
 
   if (updates.email !== undefined && String(updates.email || '').trim()) {
-    req.user.email = String(updates.email).trim();
+    const nextEmail = String(updates.email).trim();
+    if (!isValidEmail(nextEmail)) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid email address.' });
+    }
+    req.user.email = nextEmail;
   }
 
   await persistAppState();
@@ -549,21 +576,36 @@ app.post('/api/products', authMiddleware, asyncRoute(async (req, res) => {
 
   const { name, description, price, stock, image } = req.body || {};
 
-  if (!name || !price || !stock) {
+  if (!name || price === undefined || stock === undefined) {
     return res.status(400).json({ success: false, message: 'Product name, price, and stock are required.' });
+  }
+
+  const parsedPrice = Number(price);
+  const parsedStock = Number(stock);
+
+  if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
+    return res.status(400).json({ success: false, message: 'Product price must be a valid non-negative number.' });
+  }
+
+  if (!Number.isInteger(parsedStock) || parsedStock < 0) {
+    return res.status(400).json({ success: false, message: 'Product stock must be a valid non-negative whole number.' });
   }
 
   const product = {
     id: crypto.randomUUID(),
     shopId: req.user.id,
-    name,
-    description: description || '',
-    price: Number(price),
-    stock: Number(stock),
+    name: String(name).trim(),
+    description: String(description || '').trim(),
+    price: parsedPrice,
+    stock: parsedStock,
     image: normalizeImageValue(image) || null,
     sortOrder: getNextShopProductOrder(req.user.id),
     createdAt: new Date().toISOString()
   };
+
+  if (!product.name) {
+    return res.status(400).json({ success: false, message: 'Product name cannot be empty.' });
+  }
 
   products.push(product);
   await persistAppState();
@@ -880,10 +922,26 @@ app.put('/api/products/:productId', authMiddleware, asyncRoute(async (req, res) 
     return res.status(400).json({ success: false, message: 'Product name, price, and stock are required.' });
   }
 
-  product.name = String(name);
-  product.description = description ?? product.description;
-  product.price = Number(price);
-  product.stock = Number(stock);
+  const parsedPrice = Number(price);
+  const parsedStock = Number(stock);
+
+  if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
+    return res.status(400).json({ success: false, message: 'Product price must be a valid non-negative number.' });
+  }
+
+  if (!Number.isInteger(parsedStock) || parsedStock < 0) {
+    return res.status(400).json({ success: false, message: 'Product stock must be a valid non-negative whole number.' });
+  }
+
+  const normalizedName = String(name).trim();
+  if (!normalizedName) {
+    return res.status(400).json({ success: false, message: 'Product name cannot be empty.' });
+  }
+
+  product.name = normalizedName;
+  product.description = String(description ?? product.description).trim();
+  product.price = parsedPrice;
+  product.stock = parsedStock;
   product.image = normalizeImageValue(image) ?? product.image ?? null;
 
   await persistAppState();
