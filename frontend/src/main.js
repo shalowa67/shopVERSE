@@ -53,12 +53,41 @@ const formatMoney = (value) => new Intl.NumberFormat('en-ZM', {
   currency: 'ZMW'
 }).format(Number(value || 0));
 
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;'
+})[character]);
+
+const safeImageUrl = (value) => {
+  const image = String(value || '').trim();
+
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/]+={0,2}$/i.test(image)) {
+    return image;
+  }
+
+  try {
+    const url = new URL(image);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : '';
+  } catch (error) {
+    return '';
+  }
+};
+
+const safeThemeColor = (value) => {
+  const color = String(value || '').trim();
+  return /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(color) ? color : '#4f46e5';
+};
+
 const getProductImageMarkup = (product) => {
-  if (!product || !product.image) {
+  const image = product && safeImageUrl(product.image);
+  if (!image) {
     return '<div class="product-thumb placeholder-thumb">No image</div>';
   }
 
-  return `<img class="product-thumb" src="${product.image}" alt="${product.name}" />`;
+  return `<img class="product-thumb" src="${escapeHtml(image)}" alt="${escapeHtml(product.name)}" />`;
 };
 
 async function readFileAsDataUrl(file) {
@@ -256,8 +285,8 @@ function renderStats() {
 
   statsGrid.innerHTML = cards.map((card) => `
     <article class="stat-card">
-      <span class="eyebrow">${card.label}</span>
-      <span class="value">${card.value}</span>
+      <span class="eyebrow">${escapeHtml(card.label)}</span>
+      <span class="value">${escapeHtml(card.value)}</span>
     </article>
   `).join('');
 }
@@ -270,26 +299,33 @@ function renderShops() {
   }
 
   shopsList.innerHTML = state.shops.map((shop) => `
-    <article class="shop-listing-card" style="--shop-accent: ${shop.themeColor || '#4f46e5'};">
-      <div class="shop-listing-banner"${shop.bannerImage ? ` style="background-image: url('${shop.bannerImage}')"` : ''}></div>
+    <article class="shop-listing-card" style="--shop-accent: ${safeThemeColor(shop.themeColor)};">
+      <div class="shop-listing-banner"></div>
       <div class="shop-listing-body">
         <div class="shop-identity">
-          ${shop.profileImage
-            ? `<img class="shop-avatar" src="${shop.profileImage}" alt="${shop.name} logo" />`
-            : `<div class="shop-avatar">${shop.name.charAt(0).toUpperCase()}</div>`}
+          ${safeImageUrl(shop.profileImage)
+            ? `<img class="shop-avatar" src="${escapeHtml(safeImageUrl(shop.profileImage))}" alt="${escapeHtml(shop.name)} logo" />`
+            : `<div class="shop-avatar">${escapeHtml(String(shop.name || '').charAt(0).toUpperCase())}</div>`}
           <div class="shop-listing-title">
-            <h3>${shop.name}</h3>
-            <div class="card-meta"><span>${shop.owner}</span><span>${shop.productCount} products</span></div>
+            <h3>${escapeHtml(shop.name)}</h3>
+            <div class="card-meta"><span>${escapeHtml(shop.owner)}</span><span>${escapeHtml(shop.productCount)} products</span></div>
           </div>
         </div>
-        <p>${shop.description || 'Shop owner has not added a description yet.'}</p>
+        <p>${escapeHtml(shop.description || 'Shop owner has not added a description yet.')}</p>
         <div class="shop-listing-footer">
-          <span class="shop-location">${shop.location || 'Location not set'}</span>
-          <button class="small-button" data-shop-id="${shop.id}">Explore shop <span aria-hidden="true">→</span></button>
+          <span class="shop-location">${escapeHtml(shop.location || 'Location not set')}</span>
+          <button class="small-button" data-shop-id="${escapeHtml(shop.id)}">Explore shop <span aria-hidden="true">→</span></button>
         </div>
       </div>
     </article>
   `).join('');
+
+  shopsList.querySelectorAll('.shop-listing-banner').forEach((banner, index) => {
+    const image = safeImageUrl(state.shops[index].bannerImage);
+    if (image) {
+      banner.style.backgroundImage = `url("${image}")`;
+    }
+  });
 
   shopsList.querySelectorAll('[data-shop-id]').forEach((button) => {
     button.addEventListener('click', () => openShop(button.dataset.shopId));
@@ -302,17 +338,17 @@ async function openShop(shopId) {
     const { shop } = await apiRequest(`/api/shops/${shopId}`);
     const products = shop.products.length ? shop.products.map((product) => {
       const reviewSummary = product.reviewCount
-        ? `${product.averageRating.toFixed(1)} ★ (${product.reviewCount} reviews)`
+        ? `${Number(product.averageRating).toFixed(1)} ★ (${escapeHtml(product.reviewCount)} reviews)`
         : 'No ratings yet';
 
       const customerReviews = product.reviews && product.reviews.length
         ? product.reviews.slice(0, 2).map((review) => `
             <div class="review-item">
               <div class="review-head">
-                <strong>${review.customerName}</strong>
+                <strong>${escapeHtml(review.customerName)}</strong>
                 <span>${'★'.repeat(review.rating)}${'☆'.repeat(5 - review.rating)}</span>
               </div>
-              <p>${review.comment}</p>
+              <p>${escapeHtml(review.comment)}</p>
             </div>
           `).join('')
         : '<div class="empty-state compact-empty">No reviews yet for this product.</div>';
@@ -321,17 +357,17 @@ async function openShop(shopId) {
         <article class="card-item product-card">
           ${getProductImageMarkup(product)}
           <div>
-            <h3>${product.name}</h3>
+            <h3>${escapeHtml(product.name)}</h3>
             <div class="card-meta">
-              <span>In stock: ${product.stock}</span>
-              <span>${shop.name}</span>
+              <span>In stock: ${escapeHtml(product.stock)}</span>
+              <span>${escapeHtml(shop.name)}</span>
             </div>
           </div>
-          <p>${product.description || 'No description provided.'}</p>
+          <p>${escapeHtml(product.description || 'No description provided.')}</p>
           <div class="review-summary">${reviewSummary}</div>
           <div class="review-list">${customerReviews}</div>
           ${state.user && state.user.role === 'customer' ? `
-            <form class="review-form" data-review-product-id="${product.id}">
+            <form class="review-form" data-review-product-id="${escapeHtml(product.id)}">
               <div class="review-form-row">
                 <label>
                   <span>Rating</span>
@@ -350,7 +386,7 @@ async function openShop(shopId) {
           ` : ''}
           <div class="card-actions">
             <span class="price-tag">${formatMoney(product.price)}</span>
-            <button class="primary-button" data-product-id="${product.id}">Add to cart</button>
+            <button class="primary-button" data-product-id="${escapeHtml(product.id)}">Add to cart</button>
           </div>
         </article>
       `;
@@ -359,23 +395,31 @@ async function openShop(shopId) {
     shopsList.classList.remove('shop-directory-grid');
     shopsList.innerHTML = `
       <div class="storefront-view">
-        <div class="shop-card" style="--shop-accent: ${shop.themeColor || '#4f46e5'};">
-          <div class="shop-banner"${shop.bannerImage ? ` style="background-image: url('${shop.bannerImage}')"` : ''}></div>
+        <div class="shop-card" style="--shop-accent: ${safeThemeColor(shop.themeColor)};">
+          <div class="shop-banner"></div>
           <div class="shop-card-body">
             <div class="shop-identity">
-              ${shop.profileImage ? `<img class="shop-avatar" src="${shop.profileImage}" alt="${shop.name} logo" />` : `<div class="shop-avatar">${shop.name.charAt(0).toUpperCase()}</div>`}
+              ${safeImageUrl(shop.profileImage)
+                ? `<img class="shop-avatar" src="${escapeHtml(safeImageUrl(shop.profileImage))}" alt="${escapeHtml(shop.name)} logo" />`
+                : `<div class="shop-avatar">${escapeHtml(String(shop.name || '').charAt(0).toUpperCase())}</div>`}
               <div>
-                <h3>${shop.name}</h3>
-                <div class="card-meta"><span>${shop.owner}</span><span>${shop.products.length} products</span></div>
+                <h3>${escapeHtml(shop.name)}</h3>
+                <div class="card-meta"><span>${escapeHtml(shop.owner)}</span><span>${escapeHtml(shop.products.length)} products</span></div>
               </div>
             </div>
-            <p>${shop.description || 'Shop owner has not added a description yet.'}</p>
-            <div class="shop-location detail-location">${shop.location || 'Location not set'}</div>
+            <p>${escapeHtml(shop.description || 'Shop owner has not added a description yet.')}</p>
+            <div class="shop-location detail-location">${escapeHtml(shop.location || 'Location not set')}</div>
           </div>
         </div>
         <div class="product-grid">${products}</div>
       </div>
     `;
+
+    const shopBanner = shopsList.querySelector('.shop-banner');
+    const shopBannerImage = safeImageUrl(shop.bannerImage);
+    if (shopBanner && shopBannerImage) {
+      shopBanner.style.backgroundImage = `url("${shopBannerImage}")`;
+    }
 
     shopsList.querySelectorAll('[data-product-id]').forEach((button) => {
       button.addEventListener('click', () => addToCart(button.dataset.productId));
@@ -430,12 +474,12 @@ function renderNotifications() {
   notificationsList.innerHTML = state.notifications.map((item) => `
     <div class="mini-item notification-item">
       <div>
-        <strong>${item.type}</strong>
+        <strong>${escapeHtml(item.type)}</strong>
         <div class="card-meta">
           <span>${new Date(item.createdAt).toLocaleString()}</span>
         </div>
       </div>
-      <span class="notification-message">${item.message}</span>
+      <span class="notification-message">${escapeHtml(item.message)}</span>
     </div>
   `).join('');
 }
@@ -486,17 +530,17 @@ function renderCart() {
   cartList.innerHTML = state.cart.items.map((item) => `
     <div class="mini-item">
       <div>
-        <strong>${item.productName}</strong>
+        <strong>${escapeHtml(item.productName)}</strong>
         <div class="card-meta">
-          <span>${item.quantity} x ${formatMoney(item.price)}</span>
-          <span>${item.shopName}</span>
+          <span>${escapeHtml(item.quantity)} x ${formatMoney(item.price)}</span>
+          <span>${escapeHtml(item.shopName)}</span>
         </div>
       </div>
       <div class="inline-button-row compact-row">
-        <button class="small-button" data-cart-quantity="${item.productId}" data-direction="-1">-</button>
-        <span class="qty-pill">${item.quantity}</span>
-        <button class="small-button" data-cart-quantity="${item.productId}" data-direction="1">+</button>
-        <button class="small-button" data-remove-product="${item.productId}">Remove</button>
+        <button class="small-button" data-cart-quantity="${escapeHtml(item.productId)}" data-direction="-1">-</button>
+        <span class="qty-pill">${escapeHtml(item.quantity)}</span>
+        <button class="small-button" data-cart-quantity="${escapeHtml(item.productId)}" data-direction="1">+</button>
+        <button class="small-button" data-remove-product="${escapeHtml(item.productId)}">Remove</button>
       </div>
     </div>
   `).join('');
@@ -626,7 +670,7 @@ function renderOrders() {
     const statusSelect = state.user?.role === 'shop_owner' ? `
       <label class="order-status-control">
         <span>Status</span>
-        <select data-order-status-select="${order.id}">
+        <select data-order-status-select="${escapeHtml(order.id)}">
           <option value="pending" ${order.status === 'pending' ? 'selected' : ''}>Pending</option>
           <option value="confirmed" ${order.status === 'confirmed' ? 'selected' : ''}>Confirmed</option>
           <option value="packed" ${order.status === 'packed' ? 'selected' : ''}>Packed</option>
@@ -635,33 +679,33 @@ function renderOrders() {
         </select>
       </label>
     ` : `
-      <div class="order-status-badge">${order.status}</div>
+      <div class="order-status-badge">${escapeHtml(order.status)}</div>
     `;
 
     return `
       <article class="card-item">
         <div>
-          <h3>Order #${order.id.slice(0, 8)}</h3>
+          <h3>Order #${escapeHtml(String(order.id).slice(0, 8))}</h3>
           <div class="card-meta">
             <span>${new Date(order.createdAt).toLocaleDateString()}</span>
-            <span>${order.status}</span>
+            <span>${escapeHtml(order.status)}</span>
           </div>
         </div>
         <div class="mini-list">
           ${order.items.map((item) => `
             <div class="mini-item">
-              <span>${item.productName} x ${item.quantity}</span>
+              <span>${escapeHtml(item.productName)} x ${escapeHtml(item.quantity)}</span>
               <strong>${formatMoney(item.price * item.quantity)}</strong>
             </div>
           `).join('')}
         </div>
         <div class="order-meta-block">
           <strong>Delivery:</strong>
-          <span>${order.shippingAddress || 'No shipping address provided.'}</span>
+          <span>${escapeHtml(order.shippingAddress || 'No shipping address provided.')}</span>
         </div>
         <div class="order-meta-block">
           <strong>Payment:</strong>
-          <span>${order.paymentMethod} · ${order.paymentStatus}</span>
+          <span>${escapeHtml(order.paymentMethod)} · ${escapeHtml(order.paymentStatus)}</span>
         </div>
         ${statusSelect}
         <div class="card-actions">
@@ -703,18 +747,18 @@ function renderOwnerProducts() {
     <article class="card-item">
       ${getProductImageMarkup(product)}
       <div>
-        <h3>${product.name}</h3>
+        <h3>${escapeHtml(product.name)}</h3>
         <div class="card-meta">
-          <span>Stock: ${product.stock}</span>
+          <span>Stock: ${escapeHtml(product.stock)}</span>
           <span>${formatMoney(product.price)}</span>
         </div>
       </div>
-      <p>${product.description || 'No description provided.'}</p>
+      <p>${escapeHtml(product.description || 'No description provided.')}</p>
       <div class="card-actions">
         <span class="price-tag">Live listing</span>
         <div class="inline-button-row compact-row">
-          <button type="button" class="small-button" data-edit-product="${product.id}">Edit</button>
-          <button type="button" class="small-button danger-button" data-delete-product="${product.id}">Delete</button>
+          <button type="button" class="small-button" data-edit-product="${escapeHtml(product.id)}">Edit</button>
+          <button type="button" class="small-button danger-button" data-delete-product="${escapeHtml(product.id)}">Delete</button>
         </div>
       </div>
     </article>
@@ -789,10 +833,10 @@ function renderCheckoutModal() {
   checkoutItems.innerHTML = state.cart.items.map((item) => `
     <div class="mini-item">
       <div>
-        <strong>${item.productName}</strong>
+        <strong>${escapeHtml(item.productName)}</strong>
         <div class="card-meta">
-          <span>${item.quantity} x ${formatMoney(item.price)}</span>
-          <span>${item.shopName}</span>
+          <span>${escapeHtml(item.quantity)} x ${formatMoney(item.price)}</span>
+          <span>${escapeHtml(item.shopName)}</span>
         </div>
       </div>
       <strong>${formatMoney(item.price * item.quantity)}</strong>
@@ -1016,6 +1060,8 @@ if (typeof module !== 'undefined' && module.exports) {
     getStoredUser,
     getStoredToken,
     saveSession,
+    escapeHtml,
+    safeImageUrl,
     loadDashboard,
     reportApiError
   };

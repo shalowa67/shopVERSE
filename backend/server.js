@@ -6,6 +6,7 @@ const { createStore } = require('./storage');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const persistenceEnabled = process.env.NODE_ENV !== 'test' && process.env.SHOPVERSE_DISABLE_PERSISTENCE !== 'true';
+const demoDataEnabled = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
 const dataFilePath = process.env.SHOPVERSE_DATA_FILE || path.join(__dirname, 'data', 'shopverse.sqlite');
 const legacyDataFilePath = process.env.SHOPVERSE_LEGACY_DATA_FILE || path.join(__dirname, 'data', 'shopverse.json');
 const store = persistenceEnabled ? createStore(dataFilePath, legacyDataFilePath) : null;
@@ -19,6 +20,7 @@ const carts = {};
 const orders = [];
 const productReviews = [];
 const notifications = [];
+const sessions = new Map();
 
 const seedUsers = [
   {
@@ -91,13 +93,16 @@ const passwordMatches = (password, storedPassword) => {
 const resetAppState = () => {
   users.length = 0;
   products.length = 0;
+  sessions.clear();
   Object.keys(carts).forEach((cartKey) => delete carts[cartKey]);
   orders.length = 0;
   productReviews.length = 0;
   notifications.length = 0;
 
-  seedUsers.forEach((user) => users.push({ ...user, password: hashPassword(user.password) }));
-  seedProducts.forEach((product) => products.push({ ...product }));
+  if (demoDataEnabled) {
+    seedUsers.forEach((user) => users.push({ ...user, password: hashPassword(user.password) }));
+    seedProducts.forEach((product) => products.push({ ...product }));
+  }
 };
 
 const persistAppState = () => {
@@ -195,13 +200,15 @@ const getShopProducts = (shopId) => products.filter((product) => product.shopId 
 
 const authMiddleware = (req, res, next) => {
   const authHeader = req.headers.authorization || '';
-  const token = authHeader.replace('Bearer ', '').trim();
+  const match = /^Bearer\s+(\S+)$/i.exec(authHeader);
+  const token = match ? match[1] : '';
 
   if (!token) {
     return res.status(401).json({ success: false, message: 'Authentication required.' });
   }
 
-  const user = users.find((entry) => entry.id === token);
+  const userId = sessions.get(token);
+  const user = users.find((entry) => entry.id === userId);
 
   if (!user) {
     return res.status(401).json({ success: false, message: 'Invalid session token.' });
@@ -209,6 +216,12 @@ const authMiddleware = (req, res, next) => {
 
   req.user = user;
   next();
+};
+
+const createSession = (user) => {
+  const token = crypto.randomBytes(32).toString('hex');
+  sessions.set(token, user.id);
+  return token;
 };
 
 const getCartItems = (userId) => {
@@ -297,7 +310,7 @@ app.post('/api/register', (req, res) => {
 
   users.push(user);
   user.password = hashPassword(user.password);
-  const token = user.id;
+  const token = createSession(user);
   persistAppState();
 
   res.status(201).json({ success: true, token, user: sanitizeUser(user) });
@@ -312,11 +325,14 @@ app.post('/api/login', (req, res) => {
 
   const user = getUserByEmail(email);
 
-  if (!user || !passwordMatches(password, user.password)) {
+  const isProductionDemoAccount = !demoDataEnabled &&
+    seedUsers.some((seedUser) => seedUser.id === (user && user.id));
+
+  if (!user || isProductionDemoAccount || !passwordMatches(password, user.password)) {
     return res.status(401).json({ success: false, message: 'Invalid email or password.' });
   }
 
-  res.json({ success: true, token: user.id, user: sanitizeUser(user) });
+  res.json({ success: true, token: createSession(user), user: sanitizeUser(user) });
 });
 
 app.get('/api/me', authMiddleware, (req, res) => {

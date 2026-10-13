@@ -11,7 +11,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { createStore } = require('../backend/storage');
 
 const { app, resetAppState } = require('../backend/server');
-const { handleSessionError, loadDashboard } = require('../frontend/src/main.js');
+const { handleSessionError, loadDashboard, escapeHtml, safeImageUrl } = require('../frontend/src/main.js');
 
 beforeEach(() => {
   resetAppState();
@@ -40,6 +40,13 @@ test('stale session tokens are cleared and user is forced back to login', () => 
   assert.equal(storage.getItem('shopverse-user'), null);
   assert.equal(storage.getItem('shopverse-token'), null);
   assert.equal(reloadCalled, true);
+});
+
+test('dynamic HTML values are escaped and unsafe image URLs are rejected', () => {
+  assert.equal(escapeHtml(`<img src=x onerror="alert('x')">`), '&lt;img src=x onerror=&quot;alert(&#39;x&#39;)&quot;&gt;');
+  assert.equal(safeImageUrl('javascript:alert(1)'), '');
+  assert.equal(safeImageUrl('data:image/svg+xml,<svg onload=alert(1)>'), '');
+  assert.equal(safeImageUrl('https://images.example.com/shop.png'), 'https://images.example.com/shop.png');
 });
 
 test('stale session errors are handled without triggering an alert loop', async () => {
@@ -120,6 +127,12 @@ test('customer login and checkout flow works', async () => {
   assert.equal(login.response.status, 200, 'login should succeed');
   const loginData = JSON.parse(login.text);
   assert.equal(loginData.user.role, 'customer');
+  assert.notEqual(loginData.token, loginData.user.id, 'session tokens should be independent of public user IDs');
+
+  const predictableToken = await request('/api/me', {
+    headers: { Authorization: 'Bearer customer-demo' }
+  });
+  assert.equal(predictableToken.response.status, 401, 'a public user ID must not authenticate a request');
 
   const products = await request('/api/products');
   const productList = JSON.parse(products.text);
@@ -149,6 +162,54 @@ test('customer login and checkout flow works', async () => {
   const order = JSON.parse(placeOrder.text);
   assert.equal(order.success, true);
   assert.ok(order.order.total >= 0);
+});
+
+test('production mode omits demo accounts and their demo credentials', async () => {
+  const child = spawn(process.execPath, ['-e', `
+    const { app } = require(${JSON.stringify(path.join(__dirname, '..', 'backend', 'server.js'))});
+    app.listen(0, '127.0.0.1', function () {
+      process.stdout.write(String(this.address().port) + '\\n');
+    });
+  `], {
+    cwd: path.join(__dirname, '..'),
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      SHOPVERSE_DISABLE_PERSISTENCE: 'true'
+    },
+    stdio: ['ignore', 'pipe', 'inherit']
+  });
+
+  let childPort;
+  try {
+    childPort = await new Promise((resolve, reject) => {
+      let output = '';
+      child.stdout.on('data', (chunk) => {
+        output += chunk.toString();
+        const match = output.match(/(\d+)\r?\n/);
+        if (match) resolve(Number(match[1]));
+      });
+      child.once('error', reject);
+      child.once('exit', (code) => reject(new Error(`Production test server exited with code ${code}.`)));
+    });
+
+    const login = await fetch(`http://127.0.0.1:${childPort}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'owner@shopverse.com', password: '123456' })
+    });
+    assert.equal(login.status, 401);
+
+    const shops = await fetch(`http://127.0.0.1:${childPort}/api/shops`);
+    assert.deepEqual((await shops.json()).shops, []);
+  } finally {
+    if (child.exitCode === null) {
+      await new Promise((resolve) => {
+        child.once('exit', resolve);
+        child.kill();
+      });
+    }
+  }
 });
 
 test('shop owners can update and delete their products', async () => {
