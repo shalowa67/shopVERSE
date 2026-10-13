@@ -2,14 +2,21 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const { createStore } = require('./storage');
+const { createPostgresStore } = require('./postgres-storage');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const persistenceEnabled = process.env.NODE_ENV !== 'test' && process.env.SHOPVERSE_DISABLE_PERSISTENCE !== 'true';
 const demoDataEnabled = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
+const databaseUrl = process.env.DATABASE_URL;
 const dataFilePath = process.env.SHOPVERSE_DATA_FILE || path.join(__dirname, 'data', 'shopverse.sqlite');
 const legacyDataFilePath = process.env.SHOPVERSE_LEGACY_DATA_FILE || path.join(__dirname, 'data', 'shopverse.json');
-const store = persistenceEnabled ? createStore(dataFilePath, legacyDataFilePath) : null;
+if (persistenceEnabled && process.env.NODE_ENV === 'production' && !databaseUrl) {
+  throw new Error('DATABASE_URL is required in production to prevent losing data on restarts or deployments.');
+}
+const store = persistenceEnabled
+  ? databaseUrl ? createPostgresStore(databaseUrl) : createStore(dataFilePath, legacyDataFilePath)
+  : null;
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
@@ -107,18 +114,22 @@ const resetAppState = () => {
 
 const persistAppState = () => {
   if (!store) {
-    return;
+    return Promise.resolve();
   }
 
-  store.save({ users, products, carts, orders, productReviews, notifications });
+  return store.save({ users, products, carts, orders, productReviews, notifications, sessions: [...sessions] });
 };
 
-const restoreAppState = () => {
-  const savedState = store ? store.load() : null;
+const restoreAppState = async () => {
+  if (store && store.initialize) {
+    await store.initialize();
+  }
 
+  const savedState = store ? await store.load() : null;
   if (!savedState || savedState.users.length === 0) {
     resetAppState();
-    persistAppState();
+    normalizeShopProductOrders();
+    await persistAppState();
     return;
   }
 
@@ -128,9 +139,13 @@ const restoreAppState = () => {
   orders.push(...savedState.orders);
   productReviews.push(...savedState.productReviews);
   notifications.push(...savedState.notifications);
+  normalizeShopProductOrders();
+  for (const [tokenHash, session] of savedState.sessions || []) {
+    if (session.expiresAt > Date.now() && users.some((user) => user.id === session.userId)) {
+      sessions.set(tokenHash, session);
+    }
+  }
 };
-
-restoreAppState();
 
 const getProductById = (productId) => products.find((entry) => entry.id === productId);
 const getShopById = (shopId) => users.find((user) => user.id === shopId && user.role === 'shop_owner');
@@ -148,15 +163,17 @@ const getShopProducts = (shopId) => products
 const getNextShopProductOrder = (shopId) => getShopProducts(shopId)
   .reduce((nextOrder, product) => Math.max(nextOrder, product.sortOrder + 1), 0);
 
-users
-  .filter((user) => user.role === 'shop_owner')
-  .forEach((shop) => {
+const normalizeShopProductOrders = () => {
+  users.filter((user) => user.role === 'shop_owner').forEach((shop) => {
     getShopProducts(shop.id).forEach((product, index) => {
       if (!Number.isInteger(product.sortOrder) || product.sortOrder < 0) {
         product.sortOrder = index;
       }
     });
   });
+};
+
+const ready = restoreAppState();
 
 const getProductReviewList = (productId) => productReviews
   .filter((entry) => entry.productId === productId)
@@ -228,10 +245,16 @@ const authMiddleware = (req, res, next) => {
     return res.status(401).json({ success: false, message: 'Authentication required.' });
   }
 
-  const userId = sessions.get(token);
-  const user = users.find((entry) => entry.id === userId);
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const session = sessions.get(tokenHash);
+  const user = session && session.expiresAt > Date.now()
+    ? users.find((entry) => entry.id === session.userId)
+    : null;
 
   if (!user) {
+    if (session) {
+      sessions.delete(tokenHash);
+    }
     return res.status(401).json({ success: false, message: 'Invalid session token.' });
   }
 
@@ -239,9 +262,14 @@ const authMiddleware = (req, res, next) => {
   next();
 };
 
+const asyncRoute = (handler) => (req, res, next) => {
+  Promise.resolve(handler(req, res, next)).catch(next);
+};
+
 const createSession = (user) => {
   const token = crypto.randomBytes(32).toString('hex');
-  sessions.set(token, user.id);
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  sessions.set(tokenHash, { userId: user.id, expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 });
   return token;
 };
 
@@ -285,7 +313,7 @@ app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'ShopVerse API is running.' });
 });
 
-app.post('/api/register', (req, res) => {
+app.post('/api/register', asyncRoute(async (req, res) => {
   const {
     name,
     email,
@@ -332,12 +360,12 @@ app.post('/api/register', (req, res) => {
   users.push(user);
   user.password = hashPassword(user.password);
   const token = createSession(user);
-  persistAppState();
+  await persistAppState();
 
   res.status(201).json({ success: true, token, user: sanitizeUser(user) });
-});
+}));
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', asyncRoute(async (req, res) => {
   const { email, password } = req.body || {};
 
   if (!email || !password) {
@@ -353,14 +381,16 @@ app.post('/api/login', (req, res) => {
     return res.status(401).json({ success: false, message: 'Invalid email or password.' });
   }
 
-  res.json({ success: true, token: createSession(user), user: sanitizeUser(user) });
-});
+  const token = createSession(user);
+  await persistAppState();
+  res.json({ success: true, token, user: sanitizeUser(user) });
+}));
 
 app.get('/api/me', authMiddleware, (req, res) => {
   res.json({ success: true, user: sanitizeUser(req.user) });
 });
 
-app.patch('/api/me', authMiddleware, (req, res) => {
+app.patch('/api/me', authMiddleware, asyncRoute(async (req, res) => {
   const updates = req.body || {};
 
   if (req.user.role === 'shop_owner') {
@@ -402,9 +432,9 @@ app.patch('/api/me', authMiddleware, (req, res) => {
     req.user.email = String(updates.email).trim();
   }
 
-  persistAppState();
+  await persistAppState();
   res.json({ success: true, user: sanitizeUser(req.user) });
-});
+}));
 
 app.get('/api/shops', (req, res) => {
   const searchTerm = String(req.query.search || '').trim().toLowerCase();
@@ -479,7 +509,7 @@ app.get('/api/products/:productId/reviews', (req, res) => {
   res.json({ success: true, reviews: getProductReviewList(product.id) });
 });
 
-app.post('/api/products/:productId/reviews', authMiddleware, (req, res) => {
+app.post('/api/products/:productId/reviews', authMiddleware, asyncRoute(async (req, res) => {
   if (req.user.role !== 'customer') {
     return res.status(403).json({ success: false, message: 'Only customers can leave product reviews.' });
   }
@@ -508,11 +538,11 @@ app.post('/api/products/:productId/reviews', authMiddleware, (req, res) => {
   };
 
   productReviews.push(review);
-  persistAppState();
+  await persistAppState();
   res.status(201).json({ success: true, review });
-});
+}));
 
-app.post('/api/products', authMiddleware, (req, res) => {
+app.post('/api/products', authMiddleware, asyncRoute(async (req, res) => {
   if (req.user.role !== 'shop_owner') {
     return res.status(403).json({ success: false, message: 'Only shop owners can add products.' });
   }
@@ -536,9 +566,9 @@ app.post('/api/products', authMiddleware, (req, res) => {
   };
 
   products.push(product);
-  persistAppState();
+  await persistAppState();
   res.status(201).json({ success: true, product });
-});
+}));
 
 app.get('/api/my-products', authMiddleware, (req, res) => {
   if (req.user.role !== 'shop_owner') {
@@ -548,7 +578,7 @@ app.get('/api/my-products', authMiddleware, (req, res) => {
   res.json({ success: true, products: getShopProducts(req.user.id).map(addProductMeta) });
 });
 
-app.put('/api/my-products/order', authMiddleware, (req, res) => {
+app.put('/api/my-products/order', authMiddleware, asyncRoute(async (req, res) => {
   if (req.user.role !== 'shop_owner') {
     return res.status(403).json({ success: false, message: 'Only shop owners can reorder products.' });
   }
@@ -570,9 +600,9 @@ app.put('/api/my-products/order', authMiddleware, (req, res) => {
     getProductById(productId).sortOrder = sortOrder;
   });
 
-  persistAppState();
+  await persistAppState();
   res.json({ success: true, products: getShopProducts(req.user.id).map(addProductMeta) });
-});
+}));
 
 app.get('/api/cart', authMiddleware, (req, res) => {
   if (req.user.role !== 'customer') {
@@ -585,7 +615,7 @@ app.get('/api/cart', authMiddleware, (req, res) => {
   res.json({ success: true, cart: { items, subtotal } });
 });
 
-app.post('/api/cart/add', authMiddleware, (req, res) => {
+app.post('/api/cart/add', authMiddleware, asyncRoute(async (req, res) => {
   if (req.user.role !== 'customer') {
     return res.status(403).json({ success: false, message: 'Only customers can add products to cart.' });
   }
@@ -620,11 +650,11 @@ app.post('/api/cart/add', authMiddleware, (req, res) => {
     carts[req.user.id].items.push({ productId, quantity: requestedQuantity });
   }
 
-  persistAppState();
+  await persistAppState();
   res.json({ success: true, cart: carts[req.user.id] });
-});
+}));
 
-app.post('/api/cart/remove', authMiddleware, (req, res) => {
+app.post('/api/cart/remove', authMiddleware, asyncRoute(async (req, res) => {
   if (req.user.role !== 'customer') {
     return res.status(403).json({ success: false, message: 'Only customers can manage the cart.' });
   }
@@ -637,11 +667,11 @@ app.post('/api/cart/remove', authMiddleware, (req, res) => {
   }
 
   cart.items = cart.items.filter((item) => item.productId !== productId);
-  persistAppState();
+  await persistAppState();
   res.json({ success: true, cart });
-});
+}));
 
-app.post('/api/cart/update', authMiddleware, (req, res) => {
+app.post('/api/cart/update', authMiddleware, asyncRoute(async (req, res) => {
   if (req.user.role !== 'customer') {
     return res.status(403).json({ success: false, message: 'Only customers can manage the cart.' });
   }
@@ -670,7 +700,7 @@ app.post('/api/cart/update', authMiddleware, (req, res) => {
 
   if (nextQuantity === 0) {
     cart.items = cart.items.filter((entry) => entry.productId !== productId);
-    persistAppState();
+    await persistAppState();
     return res.json({ success: true, cart });
   }
 
@@ -679,11 +709,11 @@ app.post('/api/cart/update', authMiddleware, (req, res) => {
   }
 
   item.quantity = nextQuantity;
-  persistAppState();
+  await persistAppState();
   res.json({ success: true, cart });
-});
+}));
 
-app.post('/api/orders', authMiddleware, (req, res) => {
+app.post('/api/orders', authMiddleware, asyncRoute(async (req, res) => {
   if (req.user.role !== 'customer') {
     return res.status(403).json({ success: false, message: 'Only customers can place orders.' });
   }
@@ -752,11 +782,11 @@ app.post('/api/orders', authMiddleware, (req, res) => {
     createNotification(item.shopId, 'sale', `New order received for ${item.productName}.`);
   });
 
-  persistAppState();
+  await persistAppState();
   res.status(201).json({ success: true, order });
-});
+}));
 
-app.patch('/api/orders/:orderId/status', authMiddleware, (req, res) => {
+app.patch('/api/orders/:orderId/status', authMiddleware, asyncRoute(async (req, res) => {
   if (req.user.role !== 'shop_owner') {
     return res.status(403).json({ success: false, message: 'Only shop owners can update order status.' });
   }
@@ -776,9 +806,9 @@ app.patch('/api/orders/:orderId/status', authMiddleware, (req, res) => {
 
   order.status = status;
   createNotification(order.customerId, 'status', `Your order #${order.id.slice(0, 8)} is now ${status}.`);
-  persistAppState();
+  await persistAppState();
   res.json({ success: true, order });
-});
+}));
 
 app.get('/api/my-orders', authMiddleware, (req, res) => {
   if (req.user.role !== 'customer') {
@@ -829,7 +859,7 @@ app.get('/api/dashboard', authMiddleware, (req, res) => {
   });
 });
 
-app.put('/api/products/:productId', authMiddleware, (req, res) => {
+app.put('/api/products/:productId', authMiddleware, asyncRoute(async (req, res) => {
   if (req.user.role !== 'shop_owner') {
     return res.status(403).json({ success: false, message: 'Only shop owners can update products.' });
   }
@@ -856,11 +886,11 @@ app.put('/api/products/:productId', authMiddleware, (req, res) => {
   product.stock = Number(stock);
   product.image = normalizeImageValue(image) ?? product.image ?? null;
 
-  persistAppState();
+  await persistAppState();
   res.json({ success: true, product });
-});
+}));
 
-app.delete('/api/products/:productId', authMiddleware, (req, res) => {
+app.delete('/api/products/:productId', authMiddleware, asyncRoute(async (req, res) => {
   if (req.user.role !== 'shop_owner') {
     return res.status(403).json({ success: false, message: 'Only shop owners can delete products.' });
   }
@@ -883,9 +913,9 @@ app.delete('/api/products/:productId', authMiddleware, (req, res) => {
     cart.items = (cart.items || []).filter((item) => item.productId !== product.id);
   });
 
-  persistAppState();
+  await persistAppState();
   res.json({ success: true, message: 'Product deleted successfully.' });
-});
+}));
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'frontend', 'index.html'));
@@ -904,9 +934,19 @@ app.use((error, req, res, next) => {
 });
 
 if (require.main === module) {
-  app.listen(PORT, () => {
-    console.log(`ShopVerse app listening on http://localhost:${PORT}`);
-  });
+  ready
+    .then(() => {
+      app.listen(PORT, () => {
+        console.log(`ShopVerse app listening on http://localhost:${PORT}`);
+      });
+    })
+    .catch(async (error) => {
+      console.error('ShopVerse could not restore persistent data:', error);
+      if (store && store.close) {
+        await store.close();
+      }
+      process.exitCode = 1;
+    });
 }
 
 module.exports = { app, users, products, carts, orders, productReviews, resetAppState };

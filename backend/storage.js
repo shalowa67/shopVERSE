@@ -30,6 +30,10 @@ const schema = `
     id TEXT PRIMARY KEY,
     data TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+  );
 `;
 
 function createStore(databasePath, legacyFilePath) {
@@ -68,6 +72,7 @@ function createStore(databasePath, legacyFilePath) {
       writeRows('orders', legacyState.orders, (item) => item.id);
       writeRows('product_reviews', legacyState.productReviews, (item) => item.id);
       writeRows('notifications', legacyState.notifications, (item) => item.id);
+      writeRows('sessions', legacyState.sessions || [], ([sessionHash]) => sessionHash, ([, session]) => session);
     });
   }
 
@@ -96,6 +101,7 @@ function createStore(databasePath, legacyFilePath) {
       for (const table of ['users', 'products', 'carts', 'orders', 'product_reviews', 'notifications']) {
         database.exec(`DELETE FROM ${table}`);
       }
+      database.exec('DELETE FROM sessions');
 
       writeRows('users', state.users, (item) => item.id);
       writeRows('products', state.products, (item) => item.id);
@@ -103,6 +109,7 @@ function createStore(databasePath, legacyFilePath) {
       writeRows('orders', state.orders, (item) => item.id);
       writeRows('product_reviews', state.productReviews, (item) => item.id);
       writeRows('notifications', state.notifications, (item) => item.id);
+      writeRows('sessions', state.sessions || [], ([sessionHash]) => sessionHash, ([, session]) => session);
     });
   }
 
@@ -114,7 +121,9 @@ function createStore(databasePath, legacyFilePath) {
         carts: readCarts(),
         orders: readRows('orders'),
         productReviews: readRows('product_reviews'),
-        notifications: readRows('notifications')
+        notifications: readRows('notifications'),
+        sessions: database.prepare('SELECT id, data FROM sessions').all()
+          .map((row) => [row.id, JSON.parse(row.data)])
       };
     },
     save(state) {

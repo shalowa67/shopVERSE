@@ -793,10 +793,11 @@ test('registered accounts persist across server restarts', async () => {
       })
     });
     assert.equal(registerResponse.status, 201);
+    const registration = await registerResponse.json();
     await stopServer(server);
 
     const database = new DatabaseSync(dataFile);
-    const persistedUser = JSON.parse(database.prepare('SELECT data FROM users WHERE id = ?').get(JSON.parse(await registerResponse.text()).user.id).data);
+    const persistedUser = JSON.parse(database.prepare('SELECT data FROM users WHERE id = ?').get(registration.user.id).data);
     database.close();
     assert.match(persistedUser.password, /^scrypt\$/);
     assert.notEqual(persistedUser.password, 'test-password-123');
@@ -809,6 +810,12 @@ test('registered accounts persist across server restarts', async () => {
       body: JSON.stringify({ email: 'persistent@shopverse.test', password: 'test-password-123' })
     });
     assert.equal(loginResponse.status, 200, 'registered account should remain available after restart');
+
+    const restoredSessionResponse = await fetch(`http://127.0.0.1:${port}/api/me`, {
+      headers: { Authorization: `Bearer ${registration.token}` }
+    });
+    assert.equal(restoredSessionResponse.status, 200, 'registered session should remain valid after restart');
+    assert.equal((await restoredSessionResponse.json()).user.id, registration.user.id);
   } finally {
     if (server) await stopServer(server);
     fs.rmSync(dataDirectory, { recursive: true, force: true });
@@ -825,7 +832,8 @@ test('legacy JSON marketplace data imports into SQLite', () => {
     carts: { 'user-1': { items: [{ productId: 'product-1', quantity: 2 }] } },
     orders: [{ id: 'order-1', customerId: 'user-1' }],
     productReviews: [{ id: 'review-1', productId: 'product-1' }],
-    notifications: [{ id: 'notification-1', userId: 'user-1' }]
+    notifications: [{ id: 'notification-1', userId: 'user-1' }],
+    sessions: []
   };
   fs.writeFileSync(legacyFilePath, JSON.stringify(legacyState));
 
