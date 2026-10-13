@@ -256,6 +256,33 @@ h1 {
   background: #fff;
 }
 
+.owner-product-card {
+  transition: opacity 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.owner-product-card.is-dragging {
+  opacity: 0.45;
+  border-style: dashed;
+}
+
+.product-reorder-actions {
+  flex-wrap: wrap;
+}
+
+.product-drag-handle {
+  cursor: grab;
+  touch-action: none;
+}
+
+.product-drag-handle:active {
+  cursor: grabbing;
+}
+
+.product-reorder-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .shop-card {
   overflow: hidden;
   border: 1px solid var(--border);

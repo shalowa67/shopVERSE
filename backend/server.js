@@ -135,6 +135,29 @@ restoreAppState();
 const getProductById = (productId) => products.find((entry) => entry.id === productId);
 const getShopById = (shopId) => users.find((user) => user.id === shopId && user.role === 'shop_owner');
 
+const getShopProducts = (shopId) => products
+  .filter((product) => product.shopId === shopId)
+  .map((product, index) => ({ product, index }))
+  .sort((a, b) => {
+    const orderA = Number.isInteger(a.product.sortOrder) ? a.product.sortOrder : a.index;
+    const orderB = Number.isInteger(b.product.sortOrder) ? b.product.sortOrder : b.index;
+    return orderA - orderB || a.index - b.index;
+  })
+  .map(({ product }) => product);
+
+const getNextShopProductOrder = (shopId) => getShopProducts(shopId)
+  .reduce((nextOrder, product) => Math.max(nextOrder, product.sortOrder + 1), 0);
+
+users
+  .filter((user) => user.role === 'shop_owner')
+  .forEach((shop) => {
+    getShopProducts(shop.id).forEach((product, index) => {
+      if (!Number.isInteger(product.sortOrder) || product.sortOrder < 0) {
+        product.sortOrder = index;
+      }
+    });
+  });
+
 const getProductReviewList = (productId) => productReviews
   .filter((entry) => entry.productId === productId)
   .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -196,8 +219,6 @@ const createNotification = (userId, type, message) => {
 };
 
 const getUserByEmail = (email) => users.find((user) => user.email.toLowerCase() === email.toLowerCase());
-const getShopProducts = (shopId) => products.filter((product) => product.shopId === shopId);
-
 const authMiddleware = (req, res, next) => {
   const authHeader = req.headers.authorization || '';
   const match = /^Bearer\s+(\S+)$/i.exec(authHeader);
@@ -510,6 +531,7 @@ app.post('/api/products', authMiddleware, (req, res) => {
     price: Number(price),
     stock: Number(stock),
     image: normalizeImageValue(image) || null,
+    sortOrder: getNextShopProductOrder(req.user.id),
     createdAt: new Date().toISOString()
   };
 
@@ -523,6 +545,32 @@ app.get('/api/my-products', authMiddleware, (req, res) => {
     return res.status(403).json({ success: false, message: 'Only shop owners can view this list.' });
   }
 
+  res.json({ success: true, products: getShopProducts(req.user.id).map(addProductMeta) });
+});
+
+app.put('/api/my-products/order', authMiddleware, (req, res) => {
+  if (req.user.role !== 'shop_owner') {
+    return res.status(403).json({ success: false, message: 'Only shop owners can reorder products.' });
+  }
+
+  const { productIds } = req.body || {};
+  const shopProducts = getShopProducts(req.user.id);
+  const shopProductIds = new Set(shopProducts.map((product) => product.id));
+
+  if (
+    !Array.isArray(productIds) ||
+    productIds.length !== shopProducts.length ||
+    new Set(productIds).size !== shopProducts.length ||
+    productIds.some((productId) => typeof productId !== 'string' || !shopProductIds.has(productId))
+  ) {
+    return res.status(400).json({ success: false, message: 'Order must contain each of your products exactly once.' });
+  }
+
+  productIds.forEach((productId, sortOrder) => {
+    getProductById(productId).sortOrder = sortOrder;
+  });
+
+  persistAppState();
   res.json({ success: true, products: getShopProducts(req.user.id).map(addProductMeta) });
 });
 

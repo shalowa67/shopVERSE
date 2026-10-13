@@ -250,6 +250,106 @@ test('shop owners can update and delete their products', async () => {
   assert.equal(deleteResponse.response.status, 200, 'product delete should succeed');
 });
 
+test('shop owners can add many products and persist a custom storefront order', async () => {
+  const ownerLogin = await request('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'owner@shopverse.com', password: '123456' })
+  });
+  const owner = JSON.parse(ownerLogin.text);
+  assert.equal(ownerLogin.response.status, 200);
+
+  const customerLogin = await request('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'customer@shopverse.com', password: '123456' })
+  });
+  const customer = JSON.parse(customerLogin.text);
+
+  for (let index = 0; index < 25; index += 1) {
+    const created = await request('/api/products', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${owner.token}`
+      },
+      body: JSON.stringify({
+        name: `Ordered test product ${index}`,
+        price: 1,
+        stock: 1
+      })
+    });
+    assert.equal(created.response.status, 201);
+  }
+
+  const productResponse = await request('/api/my-products', {
+    headers: { Authorization: `Bearer ${owner.token}` }
+  });
+  const products = JSON.parse(productResponse.text).products;
+  assert.equal(products.length, 28, 'owners can add products without a small fixed catalog limit');
+
+  const orderedIds = products.map((product) => product.id).reverse();
+  const reorderResponse = await request('/api/my-products/order', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${owner.token}`
+    },
+    body: JSON.stringify({ productIds: orderedIds })
+  });
+  assert.equal(reorderResponse.response.status, 200);
+  assert.deepEqual(
+    JSON.parse(reorderResponse.text).products.map((product) => product.id),
+    orderedIds
+  );
+
+  const invalidOrder = await request('/api/my-products/order', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${owner.token}`
+    },
+    body: JSON.stringify({ productIds: [orderedIds[0], ...orderedIds.slice(1, -1), orderedIds[0]] })
+  });
+  assert.equal(invalidOrder.response.status, 400, 'reorders must include each owned product exactly once');
+
+  const customerReorder = await request('/api/my-products/order', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${customer.token}`
+    },
+    body: JSON.stringify({ productIds: orderedIds })
+  });
+  assert.equal(customerReorder.response.status, 403);
+
+  const storefrontResponse = await request('/api/shops/shop-owner-demo');
+  const storefront = JSON.parse(storefrontResponse.text).shop;
+  assert.deepEqual(
+    storefront.products.map((product) => product.id),
+    orderedIds,
+    'the storefront should use the owner’s saved custom order'
+  );
+
+  const appendedProduct = await request('/api/products', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${owner.token}`
+    },
+    body: JSON.stringify({ name: 'Appended product', price: 1, stock: 1 })
+  });
+  assert.equal(appendedProduct.response.status, 201);
+  const refreshedProducts = await request('/api/my-products', {
+    headers: { Authorization: `Bearer ${owner.token}` }
+  });
+  assert.deepEqual(
+    JSON.parse(refreshedProducts.text).products.map((product) => product.id),
+    [...orderedIds, JSON.parse(appendedProduct.text).product.id],
+    'new products should appear at the end of the custom order'
+  );
+});
+
 test('shop search and cart quantity updates work', async () => {
   const login = await request('/api/login', {
     method: 'POST',

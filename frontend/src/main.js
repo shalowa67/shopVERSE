@@ -9,7 +9,8 @@ const state = {
   stats: null,
   notifications: [],
   shopSearchTerm: '',
-  activeShopId: null
+  activeShopId: null,
+  draggingProductId: null
 };
 
 const authSection = typeof document !== 'undefined' ? document.getElementById('authSection') : null;
@@ -743,8 +744,8 @@ function renderOwnerProducts() {
     return;
   }
 
-  ownerProducts.innerHTML = productsToRender.map((product) => `
-    <article class="card-item">
+  ownerProducts.innerHTML = productsToRender.map((product, index) => `
+    <article class="card-item owner-product-card" data-owner-product-id="${escapeHtml(product.id)}">
       ${getProductImageMarkup(product)}
       <div>
         <h3>${escapeHtml(product.name)}</h3>
@@ -756,7 +757,10 @@ function renderOwnerProducts() {
       <p>${escapeHtml(product.description || 'No description provided.')}</p>
       <div class="card-actions">
         <span class="price-tag">Live listing</span>
-        <div class="inline-button-row compact-row">
+        <div class="inline-button-row compact-row product-reorder-actions">
+          <button type="button" class="small-button product-drag-handle" draggable="true" aria-label="Drag to reorder ${escapeHtml(product.name)}" title="Drag to reorder">↕</button>
+          <button type="button" class="small-button" data-move-product="${escapeHtml(product.id)}" data-direction="-1" aria-label="Move ${escapeHtml(product.name)} up" ${index === 0 ? 'disabled' : ''}>↑</button>
+          <button type="button" class="small-button" data-move-product="${escapeHtml(product.id)}" data-direction="1" aria-label="Move ${escapeHtml(product.name)} down" ${index === productsToRender.length - 1 ? 'disabled' : ''}>↓</button>
           <button type="button" class="small-button" data-edit-product="${escapeHtml(product.id)}">Edit</button>
           <button type="button" class="small-button danger-button" data-delete-product="${escapeHtml(product.id)}">Delete</button>
         </div>
@@ -771,6 +775,79 @@ function renderOwnerProducts() {
   ownerProducts.querySelectorAll('[data-delete-product]').forEach((button) => {
     button.addEventListener('click', () => deleteProduct(button.dataset.deleteProduct));
   });
+
+  ownerProducts.querySelectorAll('[data-move-product]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const currentIndex = state.ownerProducts.findIndex((product) => product.id === button.dataset.moveProduct);
+      const nextIndex = currentIndex + Number(button.dataset.direction);
+      if (currentIndex < 0 || nextIndex < 0 || nextIndex >= state.ownerProducts.length) {
+        return;
+      }
+
+      const nextProducts = [...state.ownerProducts];
+      [nextProducts[currentIndex], nextProducts[nextIndex]] = [nextProducts[nextIndex], nextProducts[currentIndex]];
+      saveProductOrder(nextProducts);
+    });
+  });
+
+  ownerProducts.querySelectorAll('.owner-product-card').forEach((card) => {
+    const dragHandle = card.querySelector('.product-drag-handle');
+
+    dragHandle.addEventListener('dragstart', (event) => {
+      state.draggingProductId = card.dataset.ownerProductId;
+      card.classList.add('is-dragging');
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', state.draggingProductId);
+    });
+
+    dragHandle.addEventListener('dragend', () => {
+      state.draggingProductId = null;
+      card.classList.remove('is-dragging');
+    });
+
+    card.addEventListener('dragover', (event) => {
+      if (!state.draggingProductId || state.draggingProductId === card.dataset.ownerProductId) {
+        return;
+      }
+
+      event.preventDefault();
+      const draggedCard = [...ownerProducts.querySelectorAll('.owner-product-card')]
+        .find((productCard) => productCard.dataset.ownerProductId === state.draggingProductId);
+      if (!draggedCard) {
+        return;
+      }
+
+      const midpoint = card.getBoundingClientRect().top + card.offsetHeight / 2;
+      ownerProducts.insertBefore(draggedCard, event.clientY < midpoint ? card : card.nextSibling);
+    });
+
+    card.addEventListener('drop', (event) => {
+      event.preventDefault();
+      const orderedIds = [...ownerProducts.querySelectorAll('.owner-product-card')]
+        .map((productCard) => productCard.dataset.ownerProductId);
+      const reorderedProducts = orderedIds.map((productId) =>
+        state.ownerProducts.find((product) => product.id === productId)
+      );
+      saveProductOrder(reorderedProducts);
+    });
+  });
+}
+
+async function saveProductOrder(nextProducts) {
+  const previousProducts = state.ownerProducts;
+
+  try {
+    const result = await apiRequest('/api/my-products/order', {
+      method: 'PUT',
+      body: JSON.stringify({ productIds: nextProducts.map((product) => product.id) })
+    });
+    state.ownerProducts = result.products;
+    renderOwnerProducts();
+  } catch (error) {
+    state.ownerProducts = previousProducts;
+    renderOwnerProducts();
+    reportApiError(error);
+  }
 }
 
 function resetProductForm() {
