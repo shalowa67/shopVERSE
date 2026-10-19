@@ -342,35 +342,38 @@ h1 {
 }
 
 .shop-listing-banner {
-  height: 112px;
+  height: 176px;
   background-image: linear-gradient(120deg, color-mix(in srgb, var(--shop-accent) 78%, #fff), #eee8db);
-  background-size: cover;
+  background-size: cover, contain;
   background-position: center;
+  background-repeat: no-repeat;
 }
 
 .shop-listing-body {
   display: grid;
-  gap: 12px;
-  padding: 0 16px 16px;
+  gap: 14px;
+  padding: 18px;
 }
 
 .shop-listing-body .shop-identity {
-  margin-top: -27px;
-  align-items: end;
+  align-items: center;
 }
 
 .shop-listing-body .shop-avatar {
-  border: 3px solid var(--panel);
+  flex-basis: 64px;
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--border);
   box-shadow: 0 4px 12px rgba(23, 32, 51, 0.12);
 }
 
 .shop-listing-title {
   min-width: 0;
-  padding-bottom: 4px;
 }
 
 .shop-listing-title h3 {
   margin: 0 0 4px;
+  font-size: 1.15rem;
 }
 
 .shop-listing-body p {
@@ -386,7 +389,7 @@ h1 {
 }
 
 .shop-listing-footer .shop-location {
-  max-width: 60%;
+  max-width: 65%;
   overflow-wrap: anywhere;
 }
 
@@ -1329,18 +1332,6 @@ body::before {
 .shop-listing-banner {
   position: relative;
   background-image: linear-gradient(125deg, color-mix(in srgb, var(--shop-accent) 78%, #ffd879), color-mix(in srgb, var(--shop-accent) 48%, #ff7898));
-}
-
-.shop-listing-banner::after {
-  position: absolute;
-  top: 16px;
-  right: 18px;
-  width: 56px;
-  height: 56px;
-  border: 1px solid rgba(255, 255, 255, 0.55);
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.16);
-  content: "";
 }
 
 .shop-avatar {

@@ -324,7 +324,7 @@ function renderShops() {
   shopsList.querySelectorAll('.shop-listing-banner').forEach((banner, index) => {
     const image = safeImageUrl(state.shops[index].bannerImage);
     if (image) {
-      banner.style.backgroundImage = `url("${image}")`;
+      banner.style.backgroundImage = `linear-gradient(125deg, color-mix(in srgb, var(--shop-accent) 78%, #ffd879), color-mix(in srgb, var(--shop-accent) 48%, #ff7898)), url("${image}")`;
     }
   });
 
