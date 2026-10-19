@@ -355,13 +355,13 @@ async function openShop(shopId) {
         : '<div class="empty-state compact-empty">No reviews yet for this product.</div>';
 
       return `
-        <article class="card-item product-card">
+        <article class="card-item product-card" data-category="${escapeHtml(product.category || 'Other').toLowerCase()}">
           ${getProductImageMarkup(product)}
           <div>
             <h3>${escapeHtml(product.name)}</h3>
             <div class="card-meta">
+              <span class="product-category-badge">${escapeHtml(product.category || 'Other')}</span>
               <span>In stock: ${escapeHtml(product.stock)}</span>
-              <span>${escapeHtml(shop.name)}</span>
             </div>
           </div>
           <p>${escapeHtml(product.description || 'No description provided.')}</p>
@@ -412,6 +412,16 @@ async function openShop(shopId) {
             <div class="shop-location detail-location">${escapeHtml(shop.location || 'Location not set')}</div>
           </div>
         </div>
+        <div class="category-filter">
+          <label for="productCategoryFilter">Browse by category</label>
+          <select id="productCategoryFilter">
+            <option value="all">All categories</option>
+            ${[...new Set(shop.products.map((product) => String(product.category || 'Other').trim() || 'Other'))]
+              .sort((a, b) => a.localeCompare(b))
+              .map((category) => `<option value="${escapeHtml(category.toLowerCase())}">${escapeHtml(category)}</option>`)
+              .join('')}
+          </select>
+        </div>
         <div class="product-grid">${products}</div>
       </div>
     `;
@@ -424,6 +434,13 @@ async function openShop(shopId) {
 
     shopsList.querySelectorAll('[data-product-id]').forEach((button) => {
       button.addEventListener('click', () => addToCart(button.dataset.productId));
+    });
+
+    shopsList.querySelector('#productCategoryFilter')?.addEventListener('change', (event) => {
+      const selectedCategory = event.currentTarget.value;
+      shopsList.querySelectorAll('.product-card').forEach((card) => {
+        card.classList.toggle('category-hidden', selectedCategory !== 'all' && card.dataset.category !== selectedCategory);
+      });
     });
 
     shopsList.querySelectorAll('.review-form').forEach((form) => {
@@ -750,6 +767,7 @@ function renderOwnerProducts() {
       <div>
         <h3>${escapeHtml(product.name)}</h3>
         <div class="card-meta">
+          <span class="product-category-badge">${escapeHtml(product.category || 'Other')}</span>
           <span>Stock: ${escapeHtml(product.stock)}</span>
           <span>${formatMoney(product.price)}</span>
         </div>
@@ -868,6 +886,7 @@ function startEditProduct(productId) {
   }
 
   productForm.elements.name.value = product.name;
+  productForm.elements.category.value = product.category || 'Other';
   productForm.elements.description.value = product.description || '';
   productForm.elements.price.value = product.price;
   productForm.elements.stock.value = product.stock;
@@ -1064,6 +1083,7 @@ async function handleProductSubmit(event) {
   try {
     const nextPayload = {
       name: payload.name,
+      category: payload.category,
       description: payload.description,
       price: Number(payload.price),
       stock: Number(payload.stock)

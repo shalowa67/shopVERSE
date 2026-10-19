@@ -574,7 +574,7 @@ app.post('/api/products', authMiddleware, asyncRoute(async (req, res) => {
     return res.status(403).json({ success: false, message: 'Only shop owners can add products.' });
   }
 
-  const { name, description, price, stock, image } = req.body || {};
+  const { name, description, category, price, stock, image } = req.body || {};
 
   if (!name || price === undefined || stock === undefined) {
     return res.status(400).json({ success: false, message: 'Product name, price, and stock are required.' });
@@ -591,11 +591,17 @@ app.post('/api/products', authMiddleware, asyncRoute(async (req, res) => {
     return res.status(400).json({ success: false, message: 'Product stock must be a valid non-negative whole number.' });
   }
 
+  const normalizedCategory = String(category ?? 'Other').trim();
+  if (!normalizedCategory || normalizedCategory.length > 40) {
+    return res.status(400).json({ success: false, message: 'Product category must be between 1 and 40 characters.' });
+  }
+
   const product = {
     id: crypto.randomUUID(),
     shopId: req.user.id,
     name: String(name).trim(),
     description: String(description || '').trim(),
+    category: normalizedCategory,
     price: parsedPrice,
     stock: parsedStock,
     image: normalizeImageValue(image) || null,
@@ -916,7 +922,7 @@ app.put('/api/products/:productId', authMiddleware, asyncRoute(async (req, res) 
     return res.status(403).json({ success: false, message: 'You can only edit your own products.' });
   }
 
-  const { name, description, price, stock, image } = req.body || {};
+  const { name, description, category, price, stock, image } = req.body || {};
 
   if (!name || price === undefined || stock === undefined) {
     return res.status(400).json({ success: false, message: 'Product name, price, and stock are required.' });
@@ -933,6 +939,11 @@ app.put('/api/products/:productId', authMiddleware, asyncRoute(async (req, res) 
     return res.status(400).json({ success: false, message: 'Product stock must be a valid non-negative whole number.' });
   }
 
+  const normalizedCategory = String(category ?? product.category ?? 'Other').trim();
+  if (!normalizedCategory || normalizedCategory.length > 40) {
+    return res.status(400).json({ success: false, message: 'Product category must be between 1 and 40 characters.' });
+  }
+
   const normalizedName = String(name).trim();
   if (!normalizedName) {
     return res.status(400).json({ success: false, message: 'Product name cannot be empty.' });
@@ -940,6 +951,7 @@ app.put('/api/products/:productId', authMiddleware, asyncRoute(async (req, res) 
 
   product.name = normalizedName;
   product.description = String(description ?? product.description).trim();
+  product.category = normalizedCategory;
   product.price = parsedPrice;
   product.stock = parsedStock;
   product.image = normalizeImageValue(image) ?? product.image ?? null;

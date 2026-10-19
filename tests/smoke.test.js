@@ -212,15 +212,51 @@ test('production mode omits demo accounts and their demo credentials', async () 
   }
 });
 
-test('shop owners can update and delete their products', async () => {
+test('shop owners can categorize, update, and delete their products', async () => {
   const ownerLogin = await request('/api/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: 'owner@shopverse.com', password: '123456' })
   });
-
   const ownerData = JSON.parse(ownerLogin.text);
   assert.equal(ownerLogin.response.status, 200);
+
+  const createResponse = await request('/api/products', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${ownerData.token}`
+    },
+    body: JSON.stringify({ name: 'Test Laptop', category: 'Laptops', price: 1200, stock: 3 })
+  });
+  assert.equal(createResponse.response.status, 201);
+  const createdProduct = JSON.parse(createResponse.text).product;
+  assert.equal(createdProduct.category, 'Laptops');
+
+  const shopResponse = await request('/api/shops/shop-owner-demo');
+  const shop = JSON.parse(shopResponse.text).shop;
+  assert.equal(shop.products.find((product) => product.id === createdProduct.id).category, 'Laptops');
+
+  const updateCategoryResponse = await request(`/api/products/${createdProduct.id}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${ownerData.token}`
+    },
+    body: JSON.stringify({ name: 'Test Laptop', category: 'Phones', price: 1200, stock: 3 })
+  });
+  assert.equal(updateCategoryResponse.response.status, 200);
+  assert.equal(JSON.parse(updateCategoryResponse.text).product.category, 'Phones');
+
+  const invalidCategory = await request('/api/products', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${ownerData.token}`
+    },
+    body: JSON.stringify({ name: 'Invalid Category', category: '  ', price: 10, stock: 1 })
+  });
+  assert.equal(invalidCategory.response.status, 400);
 
   const productsResponse = await request('/api/my-products', {
     headers: { Authorization: `Bearer ${ownerData.token}` }

@@ -224,6 +224,27 @@
               </div>
               <div class="field-row inline-field">
                 <label>
+                  <span>Category</span>
+                  <input type="text" name="category" list="productCategories" placeholder="e.g. Phones, Perfumes, Laptops" maxlength="40" required />
+                </label>
+                <datalist id="productCategories">
+                  <option value="Phones"></option>
+                  <option value="Laptops"></option>
+                  <option value="Perfumes"></option>
+                  <option value="Electronics"></option>
+                  <option value="Fashion"></option>
+                  <option value="Beauty & skincare"></option>
+                  <option value="Home & living"></option>
+                  <option value="Accessories"></option>
+                  <option value="Food & groceries"></option>
+                  <option value="Books & stationery"></option>
+                  <option value="Sports & outdoors"></option>
+                  <option value="Toys & games"></option>
+                  <option value="Other"></option>
+                </datalist>
+              </div>
+              <div class="field-row inline-field">
+                <label>
                   <span>Price</span>
                   <input type="number" step="0.01" min="0" name="price" placeholder="0.00" required />
                 </label>
