@@ -1,0 +1,57 @@
+name: Build Windows installer
+
+# Builds desktop/ into ShopVerse-Setup.exe on GitHub's servers and publishes it as a
+# GitHub Release, which is what the website's /install download link points to.
+# Run it from the Actions tab ("Run workflow"), or push a tag like desktop-v1.0.1.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'desktop-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build installer
+        run: npx electron-builder --win --x64 --publish never
+
+      - name: Read app version
+        id: version
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the installer as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShopVerse-Setup
+          path: desktop/dist/ShopVerse-Setup.exe
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('desktop-v{0}', steps.version.outputs.version) }}
+          name: ShopVerse for Windows ${{ steps.version.outputs.version }}
+          body: |
+            Download **ShopVerse-Setup.exe** below and run it to install ShopVerse on Windows.
+
+            If Windows shows "Windows protected your PC", click **More info → Run anyway**.
+            (The installer is not code-signed yet.)
+          files: desktop/dist/ShopVerse-Setup.exe
+          make_latest: true
