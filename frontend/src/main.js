@@ -2092,6 +2092,9 @@ const install = {
   installed: false
 };
 
+// The Windows installer is published as a GitHub release asset (see desktop/README.md).
+const WINDOWS_DOWNLOAD_URL = 'https://github.com/shalowa67/shopVERSE/releases/latest/download/ShopVerse-Setup.exe';
+
 const isStandalone = () => isBrowser && (
   (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true
 );
@@ -2186,6 +2189,10 @@ function viewInstall() {
           <h1>Shop faster with the ShopVerse app.</h1>
           <p>Install ShopVerse on your phone or computer in seconds. It opens in its own window, stays on your home screen and keeps you signed in, with nothing to download from an app store.</p>
           <div class="button-row" style="margin-top: 24px">${action}</div>
+          ${isStandalone() ? '' : `
+            <p class="muted" style="font-size: .9rem; margin-top: 18px">
+              On Windows? <a class="link" href="${WINDOWS_DOWNLOAD_URL}" target="_blank" rel="noopener">${icon('download')} Download the desktop installer</a> (ShopVerse-Setup.exe)
+            </p>`}
         </div>
         <div class="install-visual" aria-hidden="true">
           <img src="/icons/icon-512.png" alt="" width="180" height="180" />
@@ -2195,7 +2202,7 @@ function viewInstall() {
       <div class="steps section-tight">
         <div class="step"><div class="step-num">${icon('device')}</div><h3>Android</h3><p>Open ShopVerse in Chrome, tap <strong>Install app</strong> at the top of the page, or open the ⋮ menu and choose <strong>Install app</strong>.</p></div>
         <div class="step"><div class="step-num">${icon('share')}</div><h3>iPhone &amp; iPad</h3><p>Open ShopVerse in Safari, tap the <strong>Share</strong> button, then <strong>Add to Home Screen</strong>.</p></div>
-        <div class="step"><div class="step-num">${icon('monitor')}</div><h3>Windows &amp; Mac</h3><p>In Chrome or Edge, click <strong>Install app</strong> at the top of the page, or the install icon at the right of the address bar.</p></div>
+        <div class="step"><div class="step-num">${icon('monitor')}</div><h3>Windows &amp; Mac</h3><p>In Chrome or Edge, click <strong>Install app</strong> at the top of the page. On Windows you can also <a class="link" href="${WINDOWS_DOWNLOAD_URL}" target="_blank" rel="noopener">download the installer</a>.</p></div>
       </div>
 
       <div class="steps">

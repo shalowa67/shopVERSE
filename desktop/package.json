@@ -1,0 +1,57 @@
+{
+  "name": "shopverse-desktop",
+  "productName": "ShopVerse",
+  "version": "1.0.0",
+  "description": "ShopVerse desktop app for Windows",
+  "author": "ShopVerse",
+  "private": true,
+  "main": "main.js",
+  "shopverse": {
+    "url": "https://shopverse-mr72.onrender.com"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --x64"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.shopverse.desktop",
+    "productName": "ShopVerse",
+    "copyright": "Copyright © ShopVerse",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "pages/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "ShopVerse-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ShopVerse",
+      "uninstallDisplayName": "ShopVerse",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

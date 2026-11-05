@@ -3,3 +3,4 @@ backend/data/
 .env
 *.log
 .DS_Store
+dist/

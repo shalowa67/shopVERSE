@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; img-src 'self'" />
+    <title>ShopVerse</title>
+    <style>
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: grid;
+        place-items: center;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        color: #0f172a;
+        background:
+          radial-gradient(700px 360px at 85% -10%, rgba(129, 140, 248, 0.35), transparent 60%),
+          #f8fafc;
+      }
+      .wrap { text-align: center; }
+      img { width: 84px; height: 84px; animation: pulse 1.6s ease-in-out infinite; }
+      h1 { margin: 18px 0 6px; font-size: 22px; letter-spacing: -0.02em; }
+      p { margin: 0; color: #64748b; font-size: 14px; }
+      .bar { width: 180px; height: 4px; margin: 22px auto 0; border-radius: 999px; background: #e0e7ff; overflow: hidden; }
+      .bar::after { content: ''; display: block; width: 40%; height: 100%; border-radius: inherit; background: #4f46e5; animation: slide 1.2s ease-in-out infinite; }
+      @keyframes pulse { 50% { transform: scale(0.94); } }
+      @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <img src="../build/icon.png" alt="" />
+      <h1>ShopVerse</h1>
+      <p>Opening the marketplace…</p>
+      <div class="bar"></div>
+    </div>
+  </body>
+</html>
