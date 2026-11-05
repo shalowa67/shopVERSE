@@ -18,13 +18,19 @@
     />
     <meta name="twitter:card" content="summary" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="ShopVerse" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.css?v=2.0.0" />
+    <link rel="stylesheet" href="/styles.css?v=2.1.0" />
   </head>
   <body>
     <a class="skip-link" href="#view">Skip to content</a>
@@ -52,6 +58,10 @@
         </nav>
 
         <div class="header-actions">
+          <button class="button button-outline button-sm install-button" id="installButton" type="button" data-action="install-app" hidden>
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></svg>
+            <span>Install app</span>
+          </button>
           <button class="icon-button" id="notificationsButton" type="button" aria-label="Notifications" aria-haspopup="true" aria-expanded="false" hidden>
             <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
             <span class="count-badge" id="notificationsBadge" hidden>0</span>
@@ -100,6 +110,7 @@
           <h4>Sell</h4>
           <a href="/register?role=shop_owner">Open a shop</a>
           <a href="/studio">Seller studio</a>
+          <a href="/install">Get the app</a>
         </div>
         <div>
           <h4>Pay with</h4>
@@ -127,6 +138,6 @@
     <div class="modal-root" id="modalRoot"></div>
     <div class="toast-region" id="toastRegion" role="status" aria-live="polite"></div>
 
-    <script src="/src/main.js?v=2.0.0"></script>
+    <script src="/src/main.js?v=2.1.0"></script>
   </body>
 </html>

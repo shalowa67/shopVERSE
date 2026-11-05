@@ -560,7 +560,11 @@ app.use(express.static(frontendDir, {
   index: false,
   maxAge: isProduction ? '7d' : 0,
   setHeaders(res, filePath) {
-    if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+    // The page, service worker and manifest must always be revalidated so updates reach installed apps.
+    if (/\.(html|webmanifest)$/.test(filePath) || filePath.endsWith(`${path.sep}sw.js`)) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+    if (filePath.endsWith('.webmanifest')) res.setHeader('Content-Type', 'application/manifest+json');
   }
 }));
 

@@ -271,7 +271,12 @@ const ICONS = {
   phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>',
   sparkle: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
-  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>'
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
+  download: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
+  share: '<path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 12v8h14v-8"/>',
+  device: '<rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/>',
+  monitor: '<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  wifi: '<path d="M2 9a15 15 0 0 1 20 0"/><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M12 19.5h.01"/>'
 };
 
 const icon = (name, className = 'icon') => `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
@@ -804,7 +809,8 @@ const routes = [
   [/^\/checkout\/?$/, viewCheckout],
   [/^\/orders\/?$/, viewOrders],
   [/^\/studio\/?$/, viewStudio],
-  [/^\/account\/?$/, viewAccount]
+  [/^\/account\/?$/, viewAccount],
+  [/^\/install\/?$/, viewInstall]
 ];
 
 function navigate(url, { replace = false } = {}) {
@@ -2078,6 +2084,129 @@ async function submitPassword(form) {
 }
 
 // ---------------------------------------------------------------------------
+// Installable app (PWA)
+// ---------------------------------------------------------------------------
+
+const install = {
+  prompt: null,
+  installed: false
+};
+
+const isStandalone = () => isBrowser && (
+  (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true
+);
+const isIos = () => isBrowser && /iphone|ipad|ipod/i.test(navigator.userAgent) &&
+  !/crios|fxios|edgios/i.test(navigator.userAgent);
+
+const canOfferInstall = () => !isStandalone() && !install.installed && (Boolean(install.prompt) || isIos());
+
+function renderInstallButton() {
+  const button = $('#installButton');
+  if (button) button.hidden = !canOfferInstall();
+}
+
+function showIosInstructions() {
+  openModal({
+    title: 'Install ShopVerse on your iPhone',
+    subtitle: 'Add it to your Home Screen in three taps.',
+    size: 'narrow',
+    body: `
+      <ol class="install-steps">
+        <li><span class="step-num">1</span><div>Tap the <strong>Share</strong> button ${icon('share')} in Safari's toolbar.</div></li>
+        <li><span class="step-num">2</span><div>Scroll down and choose <strong>Add to Home Screen</strong>.</div></li>
+        <li><span class="step-num">3</span><div>Tap <strong>Add</strong>. ShopVerse will appear on your Home Screen like any other app.</div></li>
+      </ol>`,
+    foot: '<button type="button" class="button button-primary" data-modal-close>Got it</button>'
+  });
+}
+
+async function installApp() {
+  if (install.prompt) {
+    const promptEvent = install.prompt;
+    install.prompt = null;
+    promptEvent.prompt();
+    const { outcome } = await promptEvent.userChoice;
+    if (outcome !== 'accepted') toast('No problem. You can install ShopVerse any time from the menu.');
+    renderInstallButton();
+    if (location.pathname === '/install') render();
+    return;
+  }
+  if (isIos()) {
+    showIosInstructions();
+    return;
+  }
+  navigate('/install');
+}
+
+function setupInstall() {
+  window.addEventListener('beforeinstallprompt', (event) => {
+    event.preventDefault();
+    install.prompt = event;
+    renderInstallButton();
+    if (location.pathname === '/install') render();
+  });
+
+  window.addEventListener('appinstalled', () => {
+    install.installed = true;
+    install.prompt = null;
+    renderInstallButton();
+    toast('ShopVerse is installed. Find it on your home screen or app list.', 'success');
+    if (location.pathname === '/install') render();
+  });
+
+  renderInstallButton();
+
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch(() => {
+        // The site works without the service worker; installation just won't be offered.
+      });
+    });
+  }
+}
+
+function viewInstall() {
+  setTitle('Get the app');
+  let action;
+  if (isStandalone() || install.installed) {
+    action = `<div class="notice notice-success">${icon('checkCircle')}<span>You are using the installed ShopVerse app. You're all set!</span></div>`;
+  } else if (install.prompt) {
+    action = `<button type="button" class="button button-primary button-lg" data-action="install-app">${icon('download')} Install ShopVerse</button>`;
+  } else if (isIos()) {
+    action = `<button type="button" class="button button-primary button-lg" data-action="install-app">${icon('share')} Show me how</button>`;
+  } else {
+    action = `<div class="notice">${icon('info')}<span>If you don't see an install option, open this page in Chrome, Edge or Samsung Internet on Android or desktop, or Safari on iPhone.</span></div>`;
+  }
+
+  setView(`
+    <div class="container">
+      <section class="install-hero">
+        <div>
+          <span class="eyebrow">ShopVerse app</span>
+          <h1>Shop faster with the ShopVerse app.</h1>
+          <p>Install ShopVerse on your phone or computer in seconds. It opens in its own window, stays on your home screen and keeps you signed in, with nothing to download from an app store.</p>
+          <div class="button-row" style="margin-top: 24px">${action}</div>
+        </div>
+        <div class="install-visual" aria-hidden="true">
+          <img src="/icons/icon-512.png" alt="" width="180" height="180" />
+        </div>
+      </section>
+
+      <div class="steps section-tight">
+        <div class="step"><div class="step-num">${icon('device')}</div><h3>Android</h3><p>Open ShopVerse in Chrome, tap <strong>Install app</strong> at the top of the page, or open the ⋮ menu and choose <strong>Install app</strong>.</p></div>
+        <div class="step"><div class="step-num">${icon('share')}</div><h3>iPhone &amp; iPad</h3><p>Open ShopVerse in Safari, tap the <strong>Share</strong> button, then <strong>Add to Home Screen</strong>.</p></div>
+        <div class="step"><div class="step-num">${icon('monitor')}</div><h3>Windows &amp; Mac</h3><p>In Chrome or Edge, click <strong>Install app</strong> at the top of the page, or the install icon at the right of the address bar.</p></div>
+      </div>
+
+      <div class="steps">
+        <div class="step"><div class="step-num">${icon('sparkle')}</div><h3>Feels like an app</h3><p>Full-screen, with its own icon and window. Shortcuts take you straight to products, orders or your studio.</p></div>
+        <div class="step"><div class="step-num">${icon('wifi')}</div><h3>Light on data</h3><p>The app is tiny and caches product photos, so browsing uses less data on mobile.</p></div>
+        <div class="step"><div class="step-num">${icon('shield')}</div><h3>Always up to date</h3><p>No updates to install. You always get the latest version automatically.</p></div>
+      </div>
+    </div>`);
+}
+
+// ---------------------------------------------------------------------------
 // Event wiring
 // ---------------------------------------------------------------------------
 
@@ -2180,6 +2309,9 @@ async function handleAction(action, element, event) {
     case 'order-filter':
       state.studio.orderFilter = element.dataset.filter;
       renderStudioOrders();
+      break;
+    case 'install-app':
+      installApp();
       break;
     case 'set-color': {
       const input = $('#shopProfileForm [name=shopThemeColor]');
@@ -2349,6 +2481,7 @@ function wireEvents() {
 async function initializeApp() {
   $('#year').textContent = new Date().getFullYear();
   wireEvents();
+  setupInstall();
 
   state.user = getStoredUser();
   if (!getStoredToken()) state.user = null;

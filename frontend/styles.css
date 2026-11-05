@@ -3219,6 +3219,93 @@ input[type='file']::file-selector-button {
 }
 
 /* --------------------------------------------------------------------------
+   Install (PWA)
+   -------------------------------------------------------------------------- */
+
+.install-button {
+  margin-right: 4px;
+}
+
+.install-hero {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 40px;
+  align-items: center;
+  padding: 56px 0 24px;
+}
+
+.install-hero h1 {
+  margin-top: 10px;
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.install-hero p {
+  margin-top: 14px;
+  max-width: 560px;
+  font-size: 1.05rem;
+  color: var(--ink-2);
+}
+
+.install-visual {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  max-width: 340px;
+  justify-self: center;
+  width: 100%;
+  border-radius: var(--radius-xl);
+  background:
+    radial-gradient(circle at 30% 20%, rgba(129, 140, 248, 0.35), transparent 60%),
+    linear-gradient(135deg, var(--brand-50), #fae8ff);
+  border: 1px solid var(--line);
+}
+
+.install-visual img {
+  width: 45%;
+  height: auto;
+  filter: drop-shadow(0 18px 30px rgba(79, 70, 229, 0.35));
+  animation: float 6s ease-in-out infinite;
+}
+
+.install-steps {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.install-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  color: var(--ink-2);
+}
+
+.install-steps .step-num {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  margin: 0;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.install-steps .icon {
+  width: 17px;
+  height: 17px;
+  vertical-align: -3px;
+  color: var(--info);
+}
+
+.step .step-num .icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* --------------------------------------------------------------------------
    Animations
    -------------------------------------------------------------------------- */
 
@@ -3291,6 +3378,8 @@ input[type='file']::file-selector-button {
   .summary-card { position: static; }
   .order-body { grid-template-columns: 1fr; }
   .profile-layout { grid-template-columns: 1fr; }
+  .install-hero { grid-template-columns: 1fr; padding-top: 40px; }
+  .install-visual { max-width: 220px; }
   .preview-sticky { position: static; }
   .account-layout { grid-template-columns: 1fr; }
   .footer-grid { grid-template-columns: 1fr 1fr; }
@@ -3303,6 +3392,8 @@ input[type='file']::file-selector-button {
   .header-search { display: none; }
   .hide-sm { display: none !important; }
   .avatar-name { display: none; }
+  .install-button { width: 40px; padding: 0; border: 0; box-shadow: none; background: transparent; }
+  .install-button span { display: none; }
   .avatar-button { padding: 3px; }
   .section { padding: 44px 0; }
   .hero-inner { padding: 44px 16px 72px; }

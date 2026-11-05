@@ -209,6 +209,29 @@ test('unknown API routes return JSON 404s and pages fall back to the app shell',
   assert.ok(page.headers.get('content-security-policy'));
 });
 
+test('the app is installable: manifest, icons and service worker are served', async () => {
+  const manifestResponse = await fetch(`${baseUrl}/manifest.webmanifest`);
+  assert.equal(manifestResponse.status, 200);
+  assert.match(manifestResponse.headers.get('content-type'), /application\/manifest\+json/);
+  const manifest = await manifestResponse.json();
+  assert.equal(manifest.display, 'standalone');
+  assert.ok(manifest.icons.some((entry) => entry.sizes === '192x192'));
+  assert.ok(manifest.icons.some((entry) => entry.sizes === '512x512'));
+
+  for (const entry of manifest.icons) {
+    const iconResponse = await fetch(`${baseUrl}${entry.src}`);
+    assert.equal(iconResponse.status, 200, `${entry.src} should exist`);
+    assert.equal(iconResponse.headers.get('content-type'), 'image/png');
+  }
+
+  const worker = await fetch(`${baseUrl}/sw.js`);
+  assert.equal(worker.status, 200);
+  assert.equal(worker.headers.get('cache-control'), 'no-cache', 'service worker updates must never be cached');
+
+  const page = await (await fetch(`${baseUrl}/install`)).text();
+  assert.match(page, /rel="manifest"/);
+});
+
 test('products can be searched, filtered by category and sorted', async () => {
   const beauty = await api('/api/products?category=beauty%20%26%20skincare');
   assert.equal(beauty.data.total, 2);
