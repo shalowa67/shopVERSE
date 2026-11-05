@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.shopverse.app",
+      "sha256_cert_fingerprints": [
+        "BD:AF:C6:2F:57:D4:77:67:38:49:55:7A:CE:D1:C4:6D:6B:93:C9:50:D5:E3:81:F7:F8:6F:97:D9:B8:92:4E:43"
+      ]
+    }
+  }
+]

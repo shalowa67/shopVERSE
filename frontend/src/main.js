@@ -2094,6 +2094,9 @@ const install = {
 
 // The Windows installer is published as a GitHub release asset (see desktop/README.md).
 const WINDOWS_DOWNLOAD_URL = 'https://github.com/shalowa67/shopVERSE/releases/latest/download/ShopVerse-Setup.exe';
+// The Android app is published to a fixed "android-app" release (see android/README.md).
+const ANDROID_DOWNLOAD_URL = 'https://github.com/shalowa67/shopVERSE/releases/download/android-app/ShopVerse.apk';
+const isAndroid = () => isBrowser && /android/i.test(navigator.userAgent);
 
 const isStandalone = () => isBrowser && (
   (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true
@@ -2198,7 +2201,9 @@ function viewInstall() {
           <div class="button-row" style="margin-top: 24px">${action}</div>
           ${isStandalone() ? '' : `
             <p class="muted" style="font-size: .9rem; margin-top: 18px">
-              On Windows? <a class="link" href="${WINDOWS_DOWNLOAD_URL}" target="_blank" rel="noopener">${icon('download')} Download the desktop installer</a> (ShopVerse-Setup.exe)
+              ${isAndroid()
+                ? `Prefer a regular app? <a class="link" href="${ANDROID_DOWNLOAD_URL}" rel="noopener">${icon('download')} Download the Android app</a> (ShopVerse.apk)`
+                : `On Windows? <a class="link" href="${WINDOWS_DOWNLOAD_URL}" target="_blank" rel="noopener">${icon('download')} Download the desktop installer</a> (ShopVerse-Setup.exe)`}
             </p>`}
         </div>
         <div class="install-visual" aria-hidden="true">
@@ -2207,7 +2212,7 @@ function viewInstall() {
       </section>
 
       <div class="steps section-tight">
-        <div class="step"><div class="step-num">${icon('device')}</div><h3>Android</h3><p>Open ShopVerse in Chrome, tap <strong>Install app</strong> at the top of the page, or open the ⋮ menu and choose <strong>Install app</strong>.</p></div>
+        <div class="step"><div class="step-num">${icon('device')}</div><h3>Android</h3><p>Open ShopVerse in Chrome and tap <strong>Install app</strong>, or <a class="link" href="${ANDROID_DOWNLOAD_URL}" rel="noopener">download the Android app</a> and open it to install.</p></div>
         <div class="step"><div class="step-num">${icon('share')}</div><h3>iPhone &amp; iPad</h3><p>Open ShopVerse in Safari, tap the <strong>Share</strong> button, then <strong>Add to Home Screen</strong>.</p></div>
         <div class="step"><div class="step-num">${icon('monitor')}</div><h3>Windows &amp; Mac</h3><p>In Chrome or Edge, click <strong>Install app</strong> at the top of the page. On Windows you can also <a class="link" href="${WINDOWS_DOWNLOAD_URL}" target="_blank" rel="noopener">download the installer</a>.</p></div>
       </div>

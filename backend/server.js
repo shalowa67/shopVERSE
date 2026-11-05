@@ -555,6 +555,13 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+// Digital Asset Links: proves the Android app (android/) belongs to this site so it opens
+// full-screen without a browser address bar. Contains only the public key fingerprint.
+app.get('/.well-known/assetlinks.json', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.type('application/json').sendFile(path.join(__dirname, 'assetlinks.json'));
+});
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(frontendDir, {
   index: false,

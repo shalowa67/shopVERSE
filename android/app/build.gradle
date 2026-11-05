@@ -1,0 +1,58 @@
+plugins {
+    id 'com.android.application'
+}
+
+// The live site the app opens. Change it here (and in res/values/strings.xml) to point elsewhere.
+def siteHost = 'shopverse-mr72.onrender.com'
+
+// Release signing comes from environment variables set by the GitHub workflow.
+// Without them the build falls back to a debug key (fine for testing, but the
+// browser address bar will show because the site can't verify the app).
+def keystoreFile = System.getenv('ANDROID_KEYSTORE_FILE')
+def keystorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+
+android {
+    namespace 'com.shopverse.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.shopverse.app'
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName '1.0.0'
+
+        manifestPlaceholders = [
+            hostName: siteHost,
+            defaultUrl: "https://${siteHost}/?source=android",
+        ]
+    }
+
+    signingConfigs {
+        release {
+            if (keystoreFile) {
+                storeFile file(keystoreFile)
+                storePassword keystorePassword
+                keyAlias 'shopverse'
+                keyPassword keystorePassword
+                storeType 'pkcs12'
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig keystoreFile ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
+}

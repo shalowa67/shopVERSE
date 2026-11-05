@@ -230,6 +230,13 @@ test('the app is installable: manifest, icons and service worker are served', as
 
   const page = await (await fetch(`${baseUrl}/install`)).text();
   assert.match(page, /rel="manifest"/);
+
+  const assetLinks = await fetch(`${baseUrl}/.well-known/assetlinks.json`);
+  assert.equal(assetLinks.status, 200);
+  assert.match(assetLinks.headers.get('content-type'), /application\/json/);
+  const [statement] = await assetLinks.json();
+  assert.equal(statement.target.package_name, 'com.shopverse.app');
+  assert.equal(statement.target.sha256_cert_fingerprints.length, 1);
 });
 
 test('products can be searched, filtered by category and sorted', async () => {

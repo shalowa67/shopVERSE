@@ -4,3 +4,6 @@ backend/data/
 *.log
 .DS_Store
 dist/
+android/.gradle/
+android/**/build/
+android-dist/
