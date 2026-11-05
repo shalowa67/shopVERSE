@@ -2101,7 +2101,10 @@ const isStandalone = () => isBrowser && (
 const isIos = () => isBrowser && /iphone|ipad|ipod/i.test(navigator.userAgent) &&
   !/crios|fxios|edgios/i.test(navigator.userAgent);
 
-const canOfferInstall = () => !isStandalone() && !install.installed && (Boolean(install.prompt) || isIos());
+// Always offer installation outside the installed app. When the browser has no install
+// prompt ready (Firefox, desktop Safari, or Chrome before it decides), the button opens
+// the /install page with per-device instructions and the Windows download instead.
+const canOfferInstall = () => !isStandalone() && !install.installed;
 
 function renderInstallButton() {
   const button = $('#installButton');
@@ -2136,6 +2139,10 @@ async function installApp() {
   }
   if (isIos()) {
     showIosInstructions();
+    return;
+  }
+  if (location.pathname === '/install') {
+    toast('Your browser can\'t install apps directly. Follow the steps below, or download the Windows installer.');
     return;
   }
   navigate('/install');
