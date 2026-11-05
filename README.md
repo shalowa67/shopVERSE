@@ -30,6 +30,19 @@ management and order fulfilment tools.
   list responses stay small
 - SQLite persistence locally, PostgreSQL in production
 
+**Trust and growth**
+- Protected payments: buyers pay ShopVerse, and sellers are paid after delivery is
+  confirmed. Includes disputes, refunds and payouts.
+- Delivery fees, free-delivery thresholds and pickup, set per shop
+- Seller verification with a ✓ Verified badge
+- WhatsApp sharing with rich link previews, chat buttons, and a Share & grow toolkit
+  for sellers
+- Admin dashboard with growth metrics and payment work queues
+
+See the [documentation](docs/README.md) for the
+[growth strategy](docs/STRATEGY.md), [feature guide](docs/FEATURES.md) and
+[operations handbook](docs/OPERATIONS.md).
+
 ## Getting started
 
 Requires Node.js 22.5 or newer (for the built-in `node:sqlite`).

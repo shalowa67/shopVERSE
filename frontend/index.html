@@ -16,7 +16,12 @@
       property="og:description"
       content="Discover local shops, pay with mobile money or card, and track every order in one place."
     />
-    <meta name="twitter:card" content="summary" />
+    <meta property="og:image" content="/icons/icon-512.png" />
+    <meta property="og:url" content="/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="ShopVerse — Shop independent stores across Zambia" />
+    <meta name="twitter:description" content="Discover local shops, pay safely with mobile money, and track every order in one place." />
+    <meta name="twitter:image" content="/icons/icon-512.png" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
@@ -30,7 +35,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.css?v=2.3.0" />
+    <link rel="stylesheet" href="/styles.css?v=2.4.0" />
   </head>
   <body>
     <a class="skip-link" href="#view">Skip to content</a>
@@ -54,6 +59,7 @@
           <a href="/shops" data-nav="shops">Shops</a>
           <a href="/orders" data-nav="orders" data-auth="customer" hidden>Orders</a>
           <a href="/studio" data-nav="studio" data-auth="shop_owner" hidden>Studio</a>
+          <a href="/admin" data-nav="admin" data-admin hidden>Admin</a>
           <a href="/register?role=shop_owner" class="nav-sell" data-auth="guest">Sell on ShopVerse</a>
         </nav>
 
@@ -114,7 +120,8 @@
         </div>
         <div>
           <h4>Pay with</h4>
-          <p class="footer-pay">MTN MoMo · Airtel Money · Zamtel · Visa · Mastercard · Bank transfer</p>
+          <p class="footer-pay">MTN MoMo · Airtel Money · Zamtel Kwacha · Bank transfer · Cash on delivery</p>
+          <p class="footer-pay">🔒 Protected payment: sellers are paid after you receive your order.</p>
         </div>
       </div>
       <div class="container footer-bottom">
@@ -138,6 +145,6 @@
     <div class="modal-root" id="modalRoot"></div>
     <div class="toast-region" id="toastRegion" role="status" aria-live="polite"></div>
 
-    <script src="/src/main.js?v=2.3.0"></script>
+    <script src="/src/main.js?v=2.4.0"></script>
   </body>
 </html>

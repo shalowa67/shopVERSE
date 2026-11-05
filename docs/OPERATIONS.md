@@ -1,0 +1,117 @@
+# ShopVerse operations handbook
+
+For the people who run ShopVerse day to day: confirming payments, paying sellers,
+handling refunds and disputes, and verifying sellers. All of it happens in the
+**admin dashboard** at `/admin`.
+
+## One-time setup
+
+Set these environment variables on the web service (on Render: **Environment**),
+then redeploy.
+
+| Variable | Example | Purpose |
+|---|---|---|
+| `SHOPVERSE_ADMIN_EMAILS` | `you@example.com,partner@example.com` | Accounts that get the admin dashboard. Register these as normal accounts first. |
+| `SHOPVERSE_PAY_ACCOUNT_NAME` | `ShopVerse Ltd` | The account name buyers see when paying |
+| `SHOPVERSE_PAY_MTN` | `096 123 4567` | MTN MoMo number buyers pay into |
+| `SHOPVERSE_PAY_AIRTEL` | `097 123 4567` | Airtel Money number |
+| `SHOPVERSE_PAY_ZAMTEL` | `095 123 4567` | Zamtel Kwacha number |
+| `SHOPVERSE_PAY_BANK` | `Zanaco · Acc 0123456789 · Cairo Rd` | Bank transfer details |
+| `SHOPVERSE_COMMISSION_PERCENT` | `0` | Commission on item value. Keep at 0 for launch. |
+
+**Use dedicated business accounts** for the payment numbers, kept separate from
+personal money, so every statement line belongs to an order.
+
+If a payment number is not set, buyers who choose that method are told ShopVerse
+will contact them with payment details.
+
+## Daily routine
+
+Open **Admin → Overview**. The **Needs your attention** box lists everything
+waiting. Work through **Admin → Payments** from top to bottom.
+
+### 1. Payments to confirm (at least twice a day)
+
+Each card shows the reference (e.g. `SV-2B7277F1`), the amount, the method and the
+buyer's transaction ID.
+
+1. Open the MoMo / Airtel / bank statement for the ShopVerse account.
+2. Find a payment with **the same amount** and the **reference or transaction ID**.
+3. If it's there, tap **Money received**. The seller is told to ship.
+4. If it's not there, tap **Not found** and add a short note. The buyer is asked to
+   check and resubmit.
+
+Never confirm a payment you cannot see on the statement.
+
+### 2. Disputes (same day)
+
+A buyer reported a problem. The seller's money is frozen until you decide.
+
+1. Read the buyer's reason on the card.
+2. Contact both sides. The seller's WhatsApp is on the card; the buyer's phone is on
+   the order. Ask for photos if items are damaged or wrong.
+3. Decide:
+   - **Pay the seller** if the order was delivered as described.
+   - **Refund the customer** if it never arrived, or was damaged or not as
+     described. Arrange the return of goods with the seller where it makes sense.
+4. Add a short note. Both sides are notified.
+
+### 3. Payouts ready (daily, or on fixed payout days)
+
+The buyer has their order and the money can go to the seller.
+
+1. Send the **amount shown** (after commission) to the seller's number, by MoMo or
+   bank.
+2. Tap **Mark as paid** and paste your transfer reference.
+
+Sellers trust ShopVerse when payouts are fast. Aim for the same day, or tell sellers
+your fixed payout days (e.g. Tuesdays and Fridays).
+
+### 4. Refunds due (same day)
+
+An order was cancelled after the buyer paid.
+
+1. Send the amount back to the buyer's number.
+2. Tap **Mark as refunded**. The buyer is notified.
+
+## Verifying sellers
+
+Requests appear first on **Admin → Sellers** with the business name, NRC or PACRA
+number and a note. Before tapping **Verify**:
+
+- [ ] **Call or WhatsApp** the seller on the number given. A real person answers.
+- [ ] The **name matches** their NRC, or the business matches its PACRA
+      registration.
+- [ ] The **shop looks real**: real product photos, sensible prices, a plausible
+      location.
+- [ ] Ideally, **visit the shop** or see a video call of the stock (at least for the
+      first sellers).
+
+If anything doesn't check out, tap **Reject** and say why. The seller can fix it and
+apply again. Use **Remove badge** if a verified seller later breaks the rules (for
+example, repeated disputes lost).
+
+## Weekly review
+
+Every week, look at the **Overview** numbers and compare them with the targets in the
+[growth strategy](STRATEGY.md#what-we-measure):
+
+- **Active sellers** growing? If not, onboard more.
+- **Completion rate** below 90%? Talk to the sellers with cancellations or disputes
+  (the dispute count is on the Sellers tab).
+- **Repeat buyers** rising? That's the clearest sign the trust promise is working.
+
+## Testing locally
+
+With `NODE_ENV=development`, demo data includes an admin account:
+
+| Role | Email | Password |
+|---|---|---|
+| Admin | admin@shopverse.com | 123456 |
+| Customer | customer@shopverse.com | 123456 |
+| Shop owner (verified) | owner@shopverse.com | 123456 |
+| Shop owner (pending verification) | natasha@shopverse.com | 123456 |
+
+Demo data is only created for an **empty** database. If your local database was
+created before these features, delete the `backend/data/` folder and restart
+`npm run dev` to recreate it. This erases local test data only.

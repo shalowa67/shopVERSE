@@ -1,9 +1,11 @@
 const express = require('express');
+const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { createStore } = require('./storage');
 const { createPostgresStore } = require('./postgres-storage');
-const { seedUsers, seedProducts } = require('./seed');
+const { seedUsers, seedProducts, demoPaymentAccounts } = require('./seed');
+const market = require('./marketplace');
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -33,7 +35,27 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const LOW_STOCK_THRESHOLD = 3;
 const MIN_PASSWORD_LENGTH = 8;
 
+// Marketplace commission taken from each seller payout (percent of item value).
+// Defaults to 0 so the marketplace is free for sellers at launch.
+const COMMISSION_PERCENT = Math.min(Math.max(Number(process.env.SHOPVERSE_COMMISSION_PERCENT) || 0, 0), 50);
+
+// Accounts customers pay into for protected (escrow) payments.
+const PAYMENT_ACCOUNTS = {
+  accountName: process.env.SHOPVERSE_PAY_ACCOUNT_NAME || (demoDataEnabled ? demoPaymentAccounts.accountName : ''),
+  mtn_mobile_money: process.env.SHOPVERSE_PAY_MTN || (demoDataEnabled ? demoPaymentAccounts.mtn : ''),
+  airtel_money: process.env.SHOPVERSE_PAY_AIRTEL || (demoDataEnabled ? demoPaymentAccounts.airtel : ''),
+  zamtel_money: process.env.SHOPVERSE_PAY_ZAMTEL || (demoDataEnabled ? demoPaymentAccounts.zamtel : ''),
+  bank_transfer: process.env.SHOPVERSE_PAY_BANK || (demoDataEnabled ? demoPaymentAccounts.bank : '')
+};
+
+// People with these emails get the admin dashboard (in addition to accounts with the admin role).
+const ADMIN_EMAILS = String(process.env.SHOPVERSE_ADMIN_EMAILS || '')
+  .split(',')
+  .map((email) => email.trim().toLowerCase())
+  .filter(Boolean);
+
 const ROLES = ['customer', 'shop_owner'];
+const VERIFICATION_STATUSES = ['none', 'pending', 'verified', 'rejected'];
 const ORDER_FLOW = ['pending', 'confirmed', 'packed', 'shipped', 'delivered'];
 const ORDER_STATUSES = [...ORDER_FLOW, 'cancelled'];
 const FINAL_STATUSES = ['delivered', 'cancelled'];
@@ -90,6 +112,8 @@ const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex'
 const nowIso = () => new Date().toISOString();
 const shortId = (id) => String(id).slice(0, 8).toUpperCase();
 const formatZmw = (value) => `ZMW ${roundMoney(value).toFixed(2)}`;
+// Customers quote this when paying so ShopVerse can match the money to the order.
+const paymentReference = (orderId) => `SV-${shortId(orderId)}`;
 
 const text = (value, { field, max, required = false, fallback = '' }) => {
   const result = String(value ?? '').trim();
@@ -232,8 +256,8 @@ const resetAppState = () => {
   registerLimiter.clear();
 
   if (demoDataEnabled) {
-    seedUsers.forEach((user) => users.push({ ...user, password: hashPassword(user.password) }));
-    seedProducts.forEach((product) => products.push({ ...product }));
+    seedUsers.forEach((user) => users.push({ ...structuredClone(user), password: hashPassword(user.password) }));
+    seedProducts.forEach((product) => products.push(structuredClone(product)));
   }
 };
 
@@ -258,6 +282,21 @@ const normalizeOrders = () => {
       order.shopStatuses = {};
       order.items.forEach((item) => {
         order.shopStatuses[item.shopId] = legacyStatus;
+      });
+    }
+    // Orders placed before protected payments existed were settled directly with the shop.
+    if (!order.payment) {
+      order.payment = {
+        method: order.paymentMethod,
+        reference: paymentReference(order.id),
+        protected: false,
+        status: order.paymentStatus || 'pending'
+      };
+    }
+    if (!order.fulfilment) {
+      order.fulfilment = {};
+      Object.keys(order.shopStatuses).forEach((shopId) => {
+        order.fulfilment[shopId] = { method: 'delivery', deliveryFee: 0 };
       });
     }
     order.status = deriveOrderStatus(order);
@@ -339,18 +378,49 @@ const deriveOrderStatus = (order) => {
 // Serializers (what the API exposes)
 // ---------------------------------------------------------------------------
 
-const sanitizeUser = (user) => ({
-  id: user.id,
-  name: user.name,
-  email: user.email,
-  role: user.role,
-  shopName: user.shopName || null,
-  shopDescription: user.shopDescription || null,
-  shopLocation: user.shopLocation || null,
-  shopProfileImage: publicImageUrl(user.shopProfileImage, `/media/shops/${user.id}/avatar`),
-  shopBannerImage: publicImageUrl(user.shopBannerImage, `/media/shops/${user.id}/banner`),
-  shopThemeColor: user.shopThemeColor || DEFAULT_THEME,
-  createdAt: user.createdAt || null
+const isAdmin = (user) => Boolean(user) && (user.role === 'admin' || ADMIN_EMAILS.includes(String(user.email).toLowerCase()));
+const isVerifiedShop = (shop) => Boolean(shop && shop.verification && shop.verification.status === 'verified');
+const verificationOf = (user) => ({ status: 'none', ...(user.verification || {}) });
+
+const sanitizeUser = (user) => {
+  const result = {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    isAdmin: isAdmin(user),
+    shopName: user.shopName || null,
+    shopDescription: user.shopDescription || null,
+    shopLocation: user.shopLocation || null,
+    shopProfileImage: publicImageUrl(user.shopProfileImage, `/media/shops/${user.id}/avatar`),
+    shopBannerImage: publicImageUrl(user.shopBannerImage, `/media/shops/${user.id}/banner`),
+    shopThemeColor: user.shopThemeColor || DEFAULT_THEME,
+    createdAt: user.createdAt || null
+  };
+  if (user.role === 'shop_owner') {
+    const verification = verificationOf(user);
+    Object.assign(result, {
+      shopPhone: user.shopPhone || null,
+      delivery: market.deliveryOf(user),
+      verification: {
+        status: verification.status,
+        businessName: verification.businessName || null,
+        idNumber: verification.idNumber || null,
+        note: verification.note || null,
+        reviewNote: verification.reviewNote || null,
+        submittedAt: verification.submittedAt || null,
+        reviewedAt: verification.reviewedAt || null
+      }
+    });
+  }
+  return result;
+};
+
+// Public, buyer-facing view of a shop's contact and delivery terms.
+const shopTerms = (shop) => ({
+  verified: isVerifiedShop(shop),
+  whatsapp: market.phoneDigits(shop.shopPhone),
+  delivery: market.deliveryOf(shop)
 });
 
 const serializeProduct = (product, { includeReviews = false } = {}) => {
@@ -362,6 +432,7 @@ const serializeProduct = (product, { includeReviews = false } = {}) => {
     shopName: shop ? shop.shopName : 'Unknown shop',
     shopLocation: shop ? shop.shopLocation || null : null,
     shopThemeColor: shop ? shop.shopThemeColor || DEFAULT_THEME : DEFAULT_THEME,
+    shopVerified: isVerifiedShop(shop),
     name: product.name,
     description: product.description || '',
     category: product.category || 'Other',
@@ -375,7 +446,10 @@ const serializeProduct = (product, { includeReviews = false } = {}) => {
     updatedAt: product.updatedAt || product.createdAt,
     ...ratingSummary(reviews)
   };
-  if (includeReviews) result.reviews = reviews.slice(0, 50);
+  if (includeReviews) {
+    result.reviews = reviews.slice(0, 50);
+    if (shop) result.shop = shopTerms(shop);
+  }
   return result;
 };
 
@@ -400,6 +474,7 @@ const serializeShop = (shop, { includeProducts = false } = {}) => {
     productCount: shopProducts.length,
     categories: Object.entries(categoryCounts).sort((a, b) => b[1] - a[1]).map(([name]) => name),
     createdAt: shop.createdAt || null,
+    ...shopTerms(shop),
     ...ratingSummary(reviews)
   };
   if (includeProducts) result.products = shopProducts.map((product) => serializeProduct(product));
@@ -428,42 +503,126 @@ const getCartView = (userId) => {
     })
     .filter(Boolean);
 
+  // Group by shop so checkout can show each shop's delivery options and fee.
+  const shops = [];
+  items.forEach((item) => {
+    let group = shops.find((entry) => entry.shopId === item.shopId);
+    if (!group) {
+      const shop = getShopById(item.shopId);
+      group = {
+        shopId: item.shopId,
+        shopName: item.shopName,
+        verified: isVerifiedShop(shop),
+        location: shop ? shop.shopLocation || null : null,
+        delivery: market.deliveryOf(shop),
+        subtotal: 0
+      };
+      shops.push(group);
+    }
+    group.subtotal = roundMoney(group.subtotal + item.lineTotal);
+  });
+  shops.forEach((group) => {
+    group.deliveryFee = market.deliveryFeeFor(group.delivery, group.subtotal);
+    group.defaultMethod = market.chooseMethod(group.delivery, 'delivery');
+  });
+
+  const subtotal = roundMoney(items.reduce((sum, item) => sum + item.price * item.quantity, 0));
+  const deliveryTotal = roundMoney(shops.reduce((sum, group) => sum + (group.defaultMethod === 'delivery' ? group.deliveryFee : 0), 0));
   return {
     items,
+    shops,
     itemCount: items.reduce((sum, item) => sum + item.quantity, 0),
-    subtotal: roundMoney(items.reduce((sum, item) => sum + item.price * item.quantity, 0))
+    subtotal,
+    deliveryTotal,
+    total: roundMoney(subtotal + deliveryTotal)
   };
 };
 
-const serializeCustomerOrder = (order) => ({
-  ...order,
-  status: deriveOrderStatus(order),
-  canCancel: Object.values(order.shopStatuses).every((status) => status === 'pending' || status === 'cancelled') &&
-    deriveOrderStatus(order) !== 'cancelled',
-  fulfillments: Object.entries(order.shopStatuses).map(([shopId, status]) => ({
-    shopId,
-    shopName: (order.items.find((item) => item.shopId === shopId) || {}).shopName || 'Unknown shop',
-    status
-  }))
-});
+const paymentInstructions = (order) => {
+  const payment = order.payment || {};
+  if (!payment.protected || !['pending', 'submitted'].includes(payment.status)) return null;
+  const account = PAYMENT_ACCOUNTS[payment.method] || '';
+  return {
+    reference: payment.reference,
+    amount: order.total,
+    accountName: PAYMENT_ACCOUNTS.accountName || 'ShopVerse',
+    account: account || null,
+    // Without a configured account (e.g. card), ShopVerse contacts the customer instead.
+    contactFirst: !account
+  };
+};
 
-// A shop owner only sees their own lines of a multi-shop order.
+const shopNameIn = (order, shopId) => (order.items.find((item) => item.shopId === shopId) || {}).shopName || 'Unknown shop';
+
+const serializeCustomerOrder = (order) => {
+  const status = deriveOrderStatus(order);
+  const payment = order.payment || {};
+  return {
+    ...order,
+    status,
+    paymentInstructions: paymentInstructions(order),
+    canCancel: Object.values(order.shopStatuses).every((entry) => entry === 'pending' || entry === 'cancelled') && status !== 'cancelled',
+    canSubmitPayment: Boolean(payment.protected) && payment.status === 'pending' && status !== 'cancelled',
+    fulfillments: Object.entries(order.shopStatuses).map(([shopId, shopStatus]) => {
+      const fulfilment = order.fulfilment[shopId] || {};
+      const shop = getShopById(shopId);
+      return {
+        shopId,
+        shopName: shopNameIn(order, shopId),
+        status: shopStatus,
+        method: fulfilment.method || 'delivery',
+        deliveryFee: fulfilment.deliveryFee || 0,
+        whatsapp: shop ? market.phoneDigits(shop.shopPhone) : null,
+        pickupLocation: fulfilment.method === 'pickup' && shop ? shop.shopLocation : null,
+        confirmedAt: fulfilment.confirmedAt || null,
+        dispute: fulfilment.dispute || null,
+        autoConfirmAt: market.autoReleaseAt(order, shopId),
+        canConfirm: ['shipped', 'delivered'].includes(shopStatus) && !fulfilment.confirmedAt && !(fulfilment.dispute && !fulfilment.dispute.resolvedAt),
+        canDispute: ['shipped', 'delivered'].includes(shopStatus) && !fulfilment.confirmedAt && !fulfilment.dispute && !fulfilment.paidOutAt
+      };
+    })
+  };
+};
+
+// A shop owner only sees their own lines of a multi-shop order, plus what they will be paid.
 const serializeShopOrder = (order, shopId) => {
   const items = order.items.filter((item) => item.shopId === shopId);
+  const fulfilment = order.fulfilment[shopId] || {};
+  const amounts = market.shopPayoutAmounts(order, shopId, COMMISSION_PERCENT);
   return {
     id: order.id,
     customerName: order.customerName,
     items,
-    total: roundMoney(items.reduce((sum, item) => sum + item.price * item.quantity, 0)),
+    itemsTotal: amounts.items,
+    deliveryFee: amounts.deliveryFee,
+    total: amounts.gross,
     status: order.shopStatuses[shopId] || 'pending',
+    method: fulfilment.method || 'delivery',
     paymentMethod: order.paymentMethod,
     paymentStatus: order.paymentStatus,
-    shippingAddress: order.shippingAddress,
+    paymentProtected: Boolean(order.payment && order.payment.protected),
+    payout: {
+      state: market.payoutState(order, shopId),
+      commission: amounts.commission,
+      net: amounts.net,
+      autoReleaseAt: market.autoReleaseAt(order, shopId),
+      paidOutAt: fulfilment.paidOutAt || null
+    },
+    customerConfirmedAt: fulfilment.confirmedAt || null,
+    dispute: fulfilment.dispute || null,
+    shippingAddress: fulfilment.method === 'pickup' ? null : order.shippingAddress,
     contactPhone: order.contactPhone || null,
+    whatsapp: market.phoneDigits(order.contactPhone),
     note: order.note || null,
     createdAt: order.createdAt,
     updatedAt: order.updatedAt || order.createdAt
   };
+};
+
+const setPaymentStatus = (order, status) => {
+  order.payment.status = status;
+  order.paymentStatus = status;
+  order.updatedAt = nowIso();
 };
 
 const createNotification = (userId, type, message) => {
@@ -520,6 +679,11 @@ const authMiddleware = (req, res, next) => {
 
 const requireRole = (role, message) => (req, res, next) => {
   if (req.user.role !== role) return res.status(403).json({ success: false, message });
+  next();
+};
+
+const requireAdmin = (req, res, next) => {
+  if (!isAdmin(req.user)) return res.status(403).json({ success: false, message: 'Only ShopVerse admins can do this.' });
   next();
 };
 
@@ -706,7 +870,7 @@ app.get('/media/shops/:shopId/:kind(avatar|banner)', (req, res) => {
 // Accounts
 // ---------------------------------------------------------------------------
 
-const shopFieldsFromBody = (body, { requireCore }) => {
+const shopFieldsFromBody = (body, { requireCore, existing = null }) => {
   const fields = {};
   if (requireCore || body.shopName !== undefined) {
     fields.shopName = text(body.shopName, { field: 'Shop name', max: 80, required: true });
@@ -729,6 +893,14 @@ const shopFieldsFromBody = (body, { requireCore }) => {
     const color = String(body.shopThemeColor || DEFAULT_THEME).trim();
     if (!isHexColor(color)) fail(400, 'Theme colour must be a hex value such as #4f46e5.');
     fields.shopThemeColor = color;
+  }
+  if (body.shopPhone !== undefined) {
+    const raw = String(body.shopPhone || '').trim();
+    if (raw && !market.phoneDigits(raw)) fail(400, 'Please enter a valid WhatsApp number, e.g. 0971234567.');
+    fields.shopPhone = raw ? market.formatPhone(raw) : null;
+  }
+  if (body.delivery !== undefined) {
+    fields.delivery = market.parseDelivery(body.delivery, existing && existing.delivery, fail);
   }
   return fields;
 };
@@ -809,7 +981,7 @@ app.patch('/api/me', authMiddleware, asyncRoute(async (req, res) => {
     if (existing && existing.id !== req.user.id) fail(409, 'An account with that email already exists.');
     updates.email = email;
   }
-  if (req.user.role === 'shop_owner') Object.assign(updates, shopFieldsFromBody(body, { requireCore: false }));
+  if (req.user.role === 'shop_owner') Object.assign(updates, shopFieldsFromBody(body, { requireCore: false, existing: req.user }));
 
   // Validate everything first, then apply, so a bad field never leaves a half-updated profile.
   Object.assign(req.user, updates);
@@ -829,6 +1001,48 @@ app.post('/api/me/password', authMiddleware, asyncRoute(async (req, res) => {
   await persistAppState();
   res.json({ success: true, message: 'Password updated.' });
 }));
+
+// Sellers ask to be verified; a ShopVerse admin reviews the details and approves or rejects.
+app.post('/api/me/verification', authMiddleware,
+  requireRole('shop_owner', 'Only shop owners can request verification.'),
+  asyncRoute(async (req, res) => {
+    const body = req.body || {};
+    const current = verificationOf(req.user);
+    if (current.status === 'verified') fail(409, 'Your shop is already verified.');
+
+    const businessName = text(body.businessName, { field: 'Business name', max: 120, required: true });
+    const idNumber = text(body.idNumber, { field: 'NRC or PACRA number', max: 40, required: true });
+    const note = text(body.note, { field: 'Note', max: 500 });
+    const phone = String(body.phone || req.user.shopPhone || '').trim();
+    if (!market.phoneDigits(phone)) fail(400, 'Add a WhatsApp number so ShopVerse can contact you.');
+
+    req.user.shopPhone = market.formatPhone(phone);
+    req.user.verification = { status: 'pending', businessName, idNumber, note: note || null, submittedAt: nowIso() };
+    users.filter(isAdmin).forEach((admin) => {
+      createNotification(admin.id, 'review', `${req.user.shopName} requested seller verification.`);
+    });
+
+    await persistAppState();
+    res.json({ success: true, user: sanitizeUser(req.user) });
+  }));
+
+// Public payment details shown at checkout and on unpaid orders.
+app.get('/api/payment-info', (req, res) => {
+  res.json({
+    success: true,
+    payment: {
+      accountName: PAYMENT_ACCOUNTS.accountName || 'ShopVerse',
+      accounts: {
+        mtn_mobile_money: PAYMENT_ACCOUNTS.mtn_mobile_money || null,
+        airtel_money: PAYMENT_ACCOUNTS.airtel_money || null,
+        zamtel_money: PAYMENT_ACCOUNTS.zamtel_money || null,
+        bank_transfer: PAYMENT_ACCOUNTS.bank_transfer || null
+      },
+      protectionDays: Math.round(market.PAYOUT_WINDOW_MS / (24 * 60 * 60 * 1000)),
+      commissionPercent: COMMISSION_PERCENT
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Reviews
@@ -1057,8 +1271,8 @@ app.post('/api/orders', ...customerOnly('Only customers can place orders.'), asy
   if (!cart || cart.items.length === 0) fail(400, 'Your cart is empty.');
 
   const body = req.body || {};
+  const requestedMethods = body.fulfilment && typeof body.fulfilment === 'object' ? body.fulfilment : {};
   const shippingAddress = text(body.shippingAddress, { field: 'Delivery address', max: 300 });
-  if (!shippingAddress) fail(400, 'A delivery address is required before placing an order.');
   const contactPhone = text(body.contactPhone, { field: 'Phone number', max: 30 });
   if (contactPhone && !/^[+\d][\d\s()-]{5,}$/.test(contactPhone)) fail(400, 'Please provide a valid phone number.');
   const note = text(body.note, { field: 'Order note', max: 500 });
@@ -1076,6 +1290,21 @@ app.post('/api/orders', ...customerOnly('Only customers can place orders.'), asy
     }
     return { item, product };
   });
+
+  // Work out delivery or pickup and the delivery fee for each shop in the cart.
+  const fulfilment = {};
+  lines.forEach(({ item, product }) => {
+    const entry = fulfilment[product.shopId] || (fulfilment[product.shopId] = { itemsSubtotal: 0 });
+    entry.itemsSubtotal += product.price * item.quantity;
+  });
+  Object.entries(fulfilment).forEach(([shopId, entry]) => {
+    const delivery = market.deliveryOf(getShopById(shopId));
+    entry.method = market.chooseMethod(delivery, requestedMethods[shopId]);
+    entry.deliveryFee = entry.method === 'delivery' ? market.deliveryFeeFor(delivery, entry.itemsSubtotal) : 0;
+    delete entry.itemsSubtotal;
+  });
+  const needsAddress = Object.values(fulfilment).some((entry) => entry.method === 'delivery');
+  if (needsAddress && !shippingAddress) fail(400, 'A delivery address is required before placing an order.');
 
   const items = lines.map(({ item, product }) => {
     product.stock -= item.quantity;
@@ -1095,17 +1324,30 @@ app.post('/api/orders', ...customerOnly('Only customers can place orders.'), asy
     shopStatuses[item.shopId] = 'pending';
   });
 
+  const orderId = crypto.randomUUID();
+  const itemsTotal = roundMoney(items.reduce((sum, item) => sum + item.price * item.quantity, 0));
+  const deliveryTotal = roundMoney(Object.values(fulfilment).reduce((sum, entry) => sum + entry.deliveryFee, 0));
+  const isProtected = market.isProtectedMethod(paymentMethod);
   const order = {
-    id: crypto.randomUUID(),
+    id: orderId,
     customerId: req.user.id,
     customerName: req.user.name,
     items,
-    total: roundMoney(items.reduce((sum, item) => sum + item.price * item.quantity, 0)),
+    itemsTotal,
+    deliveryTotal,
+    total: roundMoney(itemsTotal + deliveryTotal),
     status: 'pending',
     shopStatuses,
+    fulfilment,
     paymentMethod,
     paymentStatus: 'pending',
-    shippingAddress,
+    payment: {
+      method: paymentMethod,
+      reference: paymentReference(orderId),
+      protected: isProtected,
+      status: 'pending'
+    },
+    shippingAddress: needsAddress ? shippingAddress : null,
     contactPhone: contactPhone || null,
     note: note || null,
     createdAt: nowIso(),
@@ -1115,7 +1357,13 @@ app.post('/api/orders', ...customerOnly('Only customers can place orders.'), asy
   orders.push(order);
   carts[req.user.id] = { items: [] };
 
-  createNotification(req.user.id, 'order', `Order #${shortId(order.id)} placed. Payment is pending.`);
+  createNotification(
+    req.user.id,
+    'order',
+    isProtected
+      ? `Order #${shortId(order.id)} placed. Payment is pending. Pay ${formatZmw(order.total)} with reference ${order.payment.reference}.`
+      : `Order #${shortId(order.id)} placed. Payment is pending. Pay the shop on delivery.`
+  );
   Object.keys(shopStatuses).forEach((shopId) => {
     const shopItems = items.filter((item) => item.shopId === shopId);
     const units = shopItems.reduce((sum, item) => sum + item.quantity, 0);
@@ -1149,8 +1397,90 @@ app.post('/api/orders/:orderId/cancel', ...customerOnly('Only customers can canc
     createNotification(shopId, 'status', `Order #${shortId(order.id)} was cancelled by the customer.`);
   });
   order.status = 'cancelled';
+  // Money already sent to ShopVerse is refunded by an admin.
+  if (order.payment.protected) {
+    setPaymentStatus(order, ['held', 'submitted'].includes(order.payment.status) ? 'refund_due' : 'cancelled');
+  }
   order.updatedAt = nowIso();
 
+  await persistAppState();
+  res.json({ success: true, order: serializeCustomerOrder(order) });
+}));
+
+const findCustomerOrder = (req) => {
+  const order = orders.find((entry) => entry.id === req.params.orderId && entry.customerId === req.user.id);
+  if (!order) fail(404, 'Order not found.');
+  return order;
+};
+
+// The customer tells ShopVerse they have paid and gives the mobile money / bank transaction ID.
+app.post('/api/orders/:orderId/payment', ...customerOnly('Only customers can pay for orders.'), asyncRoute(async (req, res) => {
+  const order = findCustomerOrder(req);
+  if (!order.payment.protected) fail(400, 'This order is paid to the shop on delivery.');
+  if (order.payment.status !== 'pending') fail(409, 'Payment for this order has already been submitted.');
+  if (deriveOrderStatus(order) === 'cancelled') fail(409, 'This order was cancelled.');
+
+  const transactionId = text((req.body || {}).transactionId, { field: 'Transaction ID', max: 60, required: true });
+  order.payment.transactionId = transactionId;
+  order.payment.submittedAt = nowIso();
+  setPaymentStatus(order, 'submitted');
+
+  users.filter(isAdmin).forEach((admin) => {
+    createNotification(admin.id, 'order', `Payment submitted for order #${shortId(order.id)} (${order.payment.reference}, ${formatZmw(order.total)}).`);
+  });
+  await persistAppState();
+  res.json({ success: true, order: serializeCustomerOrder(order) });
+}));
+
+const requireShopInOrder = (order, shopId) => {
+  if (!order.shopStatuses[shopId]) fail(404, 'That shop is not part of this order.');
+  return order.fulfilment[shopId] || (order.fulfilment[shopId] = { method: 'delivery', deliveryFee: 0 });
+};
+
+// The customer confirms they received a shop's items, which releases that shop's payout.
+app.post('/api/orders/:orderId/confirm', ...customerOnly('Only customers can confirm delivery.'), asyncRoute(async (req, res) => {
+  const order = findCustomerOrder(req);
+  const shopIds = (req.body && req.body.shopId) ? [String(req.body.shopId)] : Object.keys(order.shopStatuses);
+  let confirmed = 0;
+
+  shopIds.forEach((shopId) => {
+    const fulfilment = requireShopInOrder(order, shopId);
+    const status = order.shopStatuses[shopId];
+    if (!['shipped', 'delivered'].includes(status) || fulfilment.confirmedAt) return;
+    if (fulfilment.dispute && !fulfilment.dispute.resolvedAt) return;
+    order.shopStatuses[shopId] = 'delivered';
+    fulfilment.deliveredAt = fulfilment.deliveredAt || nowIso();
+    fulfilment.confirmedAt = nowIso();
+    confirmed += 1;
+    createNotification(shopId, 'sale', `${order.customerName} confirmed receiving order #${shortId(order.id)}.${
+      order.payment.protected ? ' Your payout is being released.' : ''}`);
+  });
+  if (!confirmed) fail(409, 'There is nothing to confirm yet. Wait until the shop has shipped your order.');
+
+  order.status = deriveOrderStatus(order);
+  order.updatedAt = nowIso();
+  await persistAppState();
+  res.json({ success: true, order: serializeCustomerOrder(order) });
+}));
+
+// The customer reports a problem; the shop's payout is frozen until an admin resolves it.
+app.post('/api/orders/:orderId/dispute', ...customerOnly('Only customers can report a problem.'), asyncRoute(async (req, res) => {
+  const order = findCustomerOrder(req);
+  const shopId = String((req.body && req.body.shopId) || Object.keys(order.shopStatuses)[0]);
+  const fulfilment = requireShopInOrder(order, shopId);
+  if (!['shipped', 'delivered'].includes(order.shopStatuses[shopId])) fail(409, 'You can report a problem once the shop has shipped your order.');
+  if (fulfilment.confirmedAt) fail(409, 'You already confirmed receiving this order.');
+  if (fulfilment.paidOutAt) fail(409, 'The shop has already been paid for this order. Please contact ShopVerse support.');
+  if (fulfilment.dispute) fail(409, 'A problem has already been reported for this order.');
+
+  const reason = text((req.body || {}).reason, { field: 'Problem description', max: 1000, required: true });
+  fulfilment.dispute = { reason, openedAt: nowIso() };
+  order.updatedAt = nowIso();
+
+  createNotification(shopId, 'status', `${order.customerName} reported a problem with order #${shortId(order.id)}. Payment is on hold while ShopVerse reviews it.`);
+  users.filter(isAdmin).forEach((admin) => {
+    createNotification(admin.id, 'status', `Dispute opened on order #${shortId(order.id)} with ${shopNameIn(order, shopId)}.`);
+  });
   await persistAppState();
   res.json({ success: true, order: serializeCustomerOrder(order) });
 }));
@@ -1178,18 +1508,22 @@ app.patch('/api/orders/:orderId/status', authMiddleware,
       if (FINAL_STATUSES.includes(current)) fail(409, `This order is already ${current} and cannot be changed.`);
 
       order.shopStatuses[req.user.id] = status;
+      const fulfilment = requireShopInOrder(order, req.user.id);
       if (status === 'cancelled') restockItems(order.items.filter((item) => item.shopId === req.user.id));
+      if (status === 'delivered') fulfilment.deliveredAt = nowIso();
       order.status = deriveOrderStatus(order);
       order.updatedAt = nowIso();
 
       const multiShop = Object.keys(order.shopStatuses).length > 1;
-      createNotification(
-        order.customerId,
-        'status',
-        multiShop
-          ? `${req.user.shopName} marked its part of order #${shortId(order.id)} as ${status}.`
-          : `Your order #${shortId(order.id)} is now ${status}.`
-      );
+      let message = multiShop
+        ? `${req.user.shopName} marked its part of order #${shortId(order.id)} as ${status}.`
+        : `Your order #${shortId(order.id)} is now ${status}.`;
+      if (status === 'delivered' && order.payment.protected) {
+        const days = Math.round(market.PAYOUT_WINDOW_MS / (24 * 60 * 60 * 1000));
+        message += ` Please confirm you received it, or report a problem within ${days} days.`;
+      }
+      if (status === 'cancelled' && order.payment.confirmedAt) message += ' ShopVerse will refund your payment for these items.';
+      createNotification(order.customerId, 'status', message);
       await persistAppState();
     }
 
@@ -1248,7 +1582,12 @@ app.get('/api/dashboard', authMiddleware, (req, res) => {
         revenue: roundMoney(shopOrders.filter((order) => order.status !== 'cancelled').reduce((sum, order) => sum + order.total, 0)),
         lowStockCount: shopProducts.filter((product) => product.stock <= LOW_STOCK_THRESHOLD).length,
         averageRating,
-        reviewCount
+        reviewCount,
+        // Money in protected payments, by stage.
+        payoutHeld: roundMoney(shopOrders.filter((order) => ['held', 'on_hold'].includes(order.payout.state)).reduce((sum, order) => sum + order.payout.net, 0)),
+        payoutReady: roundMoney(shopOrders.filter((order) => order.payout.state === 'ready').reduce((sum, order) => sum + order.payout.net, 0)),
+        payoutPaid: roundMoney(shopOrders.filter((order) => order.payout.state === 'paid').reduce((sum, order) => sum + order.payout.net, 0)),
+        verification: verificationOf(req.user).status
       }
     });
   }
@@ -1267,6 +1606,211 @@ app.get('/api/dashboard', authMiddleware, (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Admin: verification, protected payments, payouts, disputes, metrics
+// ---------------------------------------------------------------------------
+
+const adminOnly = [authMiddleware, requireAdmin];
+
+const adminOrderEntry = (order, shopId = null) => {
+  const entry = {
+    orderId: order.id,
+    reference: order.payment.reference,
+    customerName: order.customerName,
+    customerPhone: order.contactPhone || null,
+    method: order.paymentMethod,
+    paymentStatus: order.payment.status,
+    transactionId: order.payment.transactionId || null,
+    submittedAt: order.payment.submittedAt || null,
+    amount: order.total,
+    createdAt: order.createdAt
+  };
+  if (shopId) {
+    const shop = getShopById(shopId);
+    const amounts = market.shopPayoutAmounts(order, shopId, COMMISSION_PERCENT);
+    Object.assign(entry, {
+      shopId,
+      shopName: shopNameIn(order, shopId),
+      shopPhone: shop ? shop.shopPhone || null : null,
+      status: order.shopStatuses[shopId],
+      payoutState: market.payoutState(order, shopId),
+      amount: amounts.gross,
+      commission: amounts.commission,
+      net: amounts.net,
+      dispute: (order.fulfilment[shopId] || {}).dispute || null
+    });
+  }
+  return entry;
+};
+
+const findOrder = (orderId) => {
+  const order = orders.find((entry) => entry.id === orderId);
+  if (!order) fail(404, 'Order not found.');
+  return order;
+};
+
+app.get('/api/admin/overview', ...adminOnly, (req, res) => {
+  res.json({ success: true, metrics: market.marketplaceMetrics({ users, products, orders, commissionPercent: COMMISSION_PERCENT }) });
+});
+
+app.get('/api/admin/sellers', ...adminOnly, (req, res) => {
+  const statusRank = { pending: 0, none: 1, rejected: 2, verified: 3 };
+  const sellers = users
+    .filter((user) => user.role === 'shop_owner')
+    .map((user) => {
+      const shopOrders = orders.filter((order) => order.shopStatuses[user.id]);
+      return {
+        ...sanitizeUser(user),
+        productCount: products.filter((product) => product.shopId === user.id).length,
+        orderCount: shopOrders.length,
+        deliveredCount: shopOrders.filter((order) => order.shopStatuses[user.id] === 'delivered').length,
+        disputeCount: shopOrders.filter((order) => (order.fulfilment[user.id] || {}).dispute).length
+      };
+    })
+    .sort((a, b) => statusRank[a.verification.status] - statusRank[b.verification.status] ||
+      new Date(b.verification.submittedAt || 0) - new Date(a.verification.submittedAt || 0));
+  res.json({ success: true, sellers });
+});
+
+app.post('/api/admin/sellers/:shopId/verification', ...adminOnly, asyncRoute(async (req, res) => {
+  const shop = getShopById(req.params.shopId);
+  if (!shop) fail(404, 'Seller not found.');
+  const status = String((req.body && req.body.status) || '');
+  if (!['verified', 'rejected', 'none'].includes(status) || !VERIFICATION_STATUSES.includes(status)) {
+    fail(400, 'Status must be verified, rejected or none.');
+  }
+  const reviewNote = text((req.body || {}).note, { field: 'Note', max: 500 });
+  shop.verification = { ...verificationOf(shop), status, reviewNote: reviewNote || null, reviewedAt: nowIso() };
+
+  const messages = {
+    verified: 'Your shop is now verified. The ✓ Verified badge appears on your storefront and products.',
+    rejected: `Your verification request was not approved.${reviewNote ? ` Reason: ${reviewNote}` : ''} You can update your details and apply again.`,
+    none: 'Your shop verification was removed. Contact ShopVerse support for details.'
+  };
+  createNotification(shop.id, 'review', messages[status]);
+  await persistAppState();
+  res.json({ success: true, seller: sanitizeUser(shop) });
+}));
+
+app.get('/api/admin/payments', ...adminOnly, (req, res) => {
+  const newestFirst = (a, b) => new Date(b.submittedAt || b.createdAt) - new Date(a.submittedAt || a.createdAt);
+  const toConfirm = orders.filter((order) => order.payment.protected && order.payment.status === 'submitted')
+    .map((order) => adminOrderEntry(order)).sort(newestFirst);
+  const awaiting = orders.filter((order) => order.payment.protected && order.payment.status === 'pending' && deriveOrderStatus(order) !== 'cancelled')
+    .map((order) => adminOrderEntry(order)).sort(newestFirst);
+
+  const byState = { ready: [], refund_due: [], on_hold: [], held: [] };
+  orders.forEach((order) => Object.keys(order.shopStatuses).forEach((shopId) => {
+    const state = market.payoutState(order, shopId);
+    if (byState[state]) byState[state].push(adminOrderEntry(order, shopId));
+  }));
+
+  res.json({
+    success: true,
+    toConfirm,
+    awaiting,
+    payouts: byState.ready.sort(newestFirst),
+    refunds: byState.refund_due.sort(newestFirst),
+    disputes: byState.on_hold.sort(newestFirst),
+    held: byState.held.sort(newestFirst)
+  });
+});
+
+// Confirm (or reject) that a customer's payment reached ShopVerse's account.
+app.post('/api/admin/orders/:orderId/payment', ...adminOnly, asyncRoute(async (req, res) => {
+  const order = findOrder(req.params.orderId);
+  const action = String((req.body && req.body.action) || '');
+  if (!order.payment.protected) fail(400, 'This order is paid to the shop on delivery.');
+
+  if (action === 'confirm') {
+    if (!['pending', 'submitted'].includes(order.payment.status)) fail(409, `Payment is already ${order.payment.status}.`);
+    order.payment.confirmedAt = nowIso();
+    order.payment.confirmedBy = req.user.id;
+    setPaymentStatus(order, deriveOrderStatus(order) === 'cancelled' ? 'refund_due' : 'held');
+    createNotification(order.customerId, 'order', `We received your payment for order #${shortId(order.id)}. It is protected until you receive your items.`);
+    Object.keys(order.shopStatuses).forEach((shopId) => {
+      if (order.shopStatuses[shopId] !== 'cancelled') {
+        createNotification(shopId, 'sale', `Payment secured for order #${shortId(order.id)}. You can ship it now.`);
+      }
+    });
+  } else if (action === 'reject') {
+    if (order.payment.status !== 'submitted') fail(409, 'Only submitted payments can be rejected.');
+    const reason = text((req.body || {}).note, { field: 'Reason', max: 300 });
+    order.payment.rejectedAt = nowIso();
+    order.payment.transactionId = null;
+    setPaymentStatus(order, 'pending');
+    createNotification(order.customerId, 'order', `We could not find your payment for order #${shortId(order.id)} (${order.payment.reference}).${
+      reason ? ` ${reason}` : ''} Please check the transaction ID and submit it again.`);
+  } else {
+    fail(400, 'Action must be confirm or reject.');
+  }
+
+  await persistAppState();
+  res.json({ success: true, entry: adminOrderEntry(order) });
+}));
+
+// Record that ShopVerse sent a seller their money.
+app.post('/api/admin/orders/:orderId/shops/:shopId/payout', ...adminOnly, asyncRoute(async (req, res) => {
+  const order = findOrder(req.params.orderId);
+  const fulfilment = requireShopInOrder(order, req.params.shopId);
+  const state = market.payoutState(order, req.params.shopId);
+  if (state !== 'ready') fail(409, `This payout is not ready to be paid (it is ${state.replace(/_/g, ' ')}).`);
+
+  fulfilment.paidOutAt = nowIso();
+  fulfilment.payoutReference = text((req.body || {}).reference, { field: 'Payout reference', max: 60 }) || null;
+  const { net } = market.shopPayoutAmounts(order, req.params.shopId, COMMISSION_PERCENT);
+  createNotification(req.params.shopId, 'sale', `ShopVerse sent you ${formatZmw(net)} for order #${shortId(order.id)}.`);
+
+  await persistAppState();
+  res.json({ success: true, entry: adminOrderEntry(order, req.params.shopId) });
+}));
+
+// Record that ShopVerse refunded the customer for a shop's cancelled part of an order.
+app.post('/api/admin/orders/:orderId/shops/:shopId/refund', ...adminOnly, asyncRoute(async (req, res) => {
+  const order = findOrder(req.params.orderId);
+  const fulfilment = requireShopInOrder(order, req.params.shopId);
+  if (market.payoutState(order, req.params.shopId) !== 'refund_due') fail(409, 'No refund is due for this part of the order.');
+
+  fulfilment.refundedAt = nowIso();
+  const { gross } = market.shopPayoutAmounts(order, req.params.shopId, COMMISSION_PERCENT);
+  const everythingRefunded = Object.keys(order.shopStatuses).every((shopId) =>
+    order.shopStatuses[shopId] !== 'cancelled' ? false : Boolean((order.fulfilment[shopId] || {}).refundedAt));
+  if (everythingRefunded) setPaymentStatus(order, 'refunded');
+  createNotification(order.customerId, 'order', `ShopVerse refunded ${formatZmw(gross)} for order #${shortId(order.id)}.`);
+
+  await persistAppState();
+  res.json({ success: true, entry: adminOrderEntry(order, req.params.shopId) });
+}));
+
+// Settle a reported problem: release the money to the seller, or refund the customer.
+app.post('/api/admin/orders/:orderId/shops/:shopId/resolve', ...adminOnly, asyncRoute(async (req, res) => {
+  const order = findOrder(req.params.orderId);
+  const shopId = req.params.shopId;
+  const fulfilment = requireShopInOrder(order, shopId);
+  if (!fulfilment.dispute || fulfilment.dispute.resolvedAt) fail(409, 'There is no open dispute for this part of the order.');
+
+  const resolution = String((req.body && req.body.resolution) || '');
+  if (!['release', 'refund'].includes(resolution)) fail(400, 'Resolution must be release or refund.');
+  const note = text((req.body || {}).note, { field: 'Note', max: 500 });
+  Object.assign(fulfilment.dispute, { resolvedAt: nowIso(), resolution, note: note || null });
+
+  if (resolution === 'release') {
+    order.shopStatuses[shopId] = 'delivered';
+    fulfilment.deliveredAt = fulfilment.deliveredAt || nowIso();
+    createNotification(order.customerId, 'status', `ShopVerse reviewed your report on order #${shortId(order.id)} and released payment to ${shopNameIn(order, shopId)}.${note ? ` ${note}` : ''}`);
+    createNotification(shopId, 'sale', `The problem reported on order #${shortId(order.id)} was resolved in your favour. Your payout is released.`);
+  } else {
+    order.shopStatuses[shopId] = 'cancelled';
+    createNotification(order.customerId, 'status', `ShopVerse reviewed your report on order #${shortId(order.id)}. You will be refunded.${note ? ` ${note}` : ''}`);
+    createNotification(shopId, 'status', `The problem reported on order #${shortId(order.id)} was resolved with a refund to the customer.${note ? ` ${note}` : ''}`);
+  }
+  order.status = deriveOrderStatus(order);
+  order.updatedAt = nowIso();
+
+  await persistAppState();
+  res.json({ success: true, entry: adminOrderEntry(order, shopId) });
+}));
+
+// ---------------------------------------------------------------------------
 // Fallbacks & errors
 // ---------------------------------------------------------------------------
 
@@ -1274,9 +1818,81 @@ app.use('/api', (req, res) => {
   res.status(404).json({ success: false, message: 'API route not found.' });
 });
 
+// Pages get link-preview tags (WhatsApp, Facebook, X) for the product or shop being shared.
+let shellTemplate = null;
+const readShell = () => {
+  if (!shellTemplate || !isProduction) shellTemplate = fs.readFileSync(path.join(frontendDir, 'index.html'), 'utf8');
+  return shellTemplate;
+};
+
+const escapeAttr = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+})[character]);
+
+const shorten = (value, max) => {
+  const clean = String(value || '').replace(/\s+/g, ' ').trim();
+  return clean.length > max ? `${clean.slice(0, max - 1).trimEnd()}…` : clean;
+};
+
+const pagePreview = (req) => {
+  const base = `${req.protocol}://${req.get('host')}`;
+  const absolute = (url) => (url && url.startsWith('/') ? `${base}${url}` : url);
+  const fallbackImage = `${base}/icons/icon-512.png`;
+  const productMatch = /^\/products\/([^/]+)\/?$/.exec(req.path);
+  const shopMatch = /^\/shops\/([^/]+)\/?$/.exec(req.path);
+
+  if (productMatch) {
+    const product = getProductById(decodeURIComponent(productMatch[1]));
+    const shop = product && getShopById(product.shopId);
+    if (product && shop) {
+      const shopImage = publicImageUrl(shop.shopBannerImage, `/media/shops/${shop.id}/banner`);
+      return {
+        title: `${product.name} · ${formatZmw(product.price)} | ShopVerse`,
+        description: shorten(`${product.stock > 0 ? 'In stock' : 'Sold out'} at ${shop.shopName}${isVerifiedShop(shop) ? ' ✓ Verified seller' : ''}. ${product.description}`, 200),
+        image: absolute(publicImageUrl(product.image, `/media/products/${product.id}`) || shopImage) || fallbackImage,
+        url: `${base}${req.path}`
+      };
+    }
+  }
+  if (shopMatch) {
+    const shop = getShopById(decodeURIComponent(shopMatch[1]));
+    if (shop) {
+      const count = getShopProducts(shop.id).length;
+      return {
+        title: `${shop.shopName}${isVerifiedShop(shop) ? ' ✓' : ''} | Shop on ShopVerse`,
+        description: shorten(`${shop.shopDescription || ''} ${count} product${count === 1 ? '' : 's'} · ${shop.shopLocation || 'Zambia'}. Pay safely with mobile money.`, 200),
+        image: absolute(publicImageUrl(shop.shopProfileImage, `/media/shops/${shop.id}/avatar`) ||
+          publicImageUrl(shop.shopBannerImage, `/media/shops/${shop.id}/banner`)) || fallbackImage,
+        url: `${base}${req.path}`
+      };
+    }
+  }
+  return { image: fallbackImage, url: `${base}${req.path === '/' ? '/' : req.path}` };
+};
+
+const renderShell = (req) => {
+  const preview = pagePreview(req);
+  let html = readShell();
+  const setMeta = (attr, key, value) => {
+    if (!value) return;
+    const pattern = new RegExp(`(<meta ${attr}="${key}" content=")[^"]*(")`);
+    html = html.replace(pattern, `$1${escapeAttr(value).replace(/\$/g, '$$$$')}$2`);
+  };
+  if (preview.title) html = html.replace(/<title>[^<]*<\/title>/, `<title>${escapeAttr(preview.title).replace(/\$/g, '$$$$')}</title>`);
+  setMeta('name', 'description', preview.description);
+  setMeta('property', 'og:title', preview.title);
+  setMeta('property', 'og:description', preview.description);
+  setMeta('property', 'og:image', preview.image);
+  setMeta('property', 'og:url', preview.url);
+  setMeta('name', 'twitter:title', preview.title);
+  setMeta('name', 'twitter:description', preview.description);
+  setMeta('name', 'twitter:image', preview.image);
+  return html;
+};
+
 app.get(/^\/(?!media\/).*/, (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
-  res.sendFile(path.join(frontendDir, 'index.html'));
+  res.type('html').send(renderShell(req));
 });
 
 // eslint-disable-next-line no-unused-vars

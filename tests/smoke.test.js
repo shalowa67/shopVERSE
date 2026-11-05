@@ -793,7 +793,8 @@ test('registered accounts persist across server restarts', async () => {
   });
 
   const waitForServer = async (child) => {
-    for (let attempt = 0; attempt < 50; attempt += 1) {
+    // Up to ~10 seconds: first start hashes the demo account passwords and creates the database.
+    for (let attempt = 0; attempt < 200; attempt += 1) {
       if (child.exitCode !== null) {
         throw new Error('Persistent test server exited before becoming ready.');
       }

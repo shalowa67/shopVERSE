@@ -13,7 +13,10 @@ const seedUsers = [
     shopName: 'Aisha Essentials',
     shopDescription: 'Handpicked home and lifestyle goods for everyday living.',
     shopLocation: 'Lusaka, Zambia',
-    shopThemeColor: '#4f46e5'
+    shopThemeColor: '#4f46e5',
+    shopPhone: '+260 97 000 0001',
+    delivery: { enabled: true, fee: 0, freeOver: null, areas: 'Free delivery within Lusaka', pickup: true },
+    verification: { status: 'verified', businessName: 'Aisha Essentials', reviewedAt: '2026-01-10T09:00:00.000Z' }
   },
   {
     id: 'shop-owner-demo-2',
@@ -24,7 +27,10 @@ const seedUsers = [
     shopName: 'Copperbelt Tech',
     shopDescription: 'Phones, laptops and accessories with honest prices and local warranty.',
     shopLocation: 'Kitwe, Zambia',
-    shopThemeColor: '#0e7490'
+    shopThemeColor: '#0e7490',
+    shopPhone: '+260 96 000 0002',
+    delivery: { enabled: true, fee: 50, freeOver: 1000, areas: 'Copperbelt same day; other towns by bus parcel', pickup: true },
+    verification: { status: 'verified', businessName: 'Copperbelt Tech Ltd', reviewedAt: '2026-01-12T09:00:00.000Z' }
   },
   {
     id: 'shop-owner-demo-3',
@@ -35,7 +41,16 @@ const seedUsers = [
     shopName: 'Amber & Oud',
     shopDescription: 'Fragrances, skincare and small-batch beauty finds.',
     shopLocation: 'Livingstone, Zambia',
-    shopThemeColor: '#b45309'
+    shopThemeColor: '#b45309',
+    shopPhone: '+260 95 000 0003',
+    delivery: { enabled: true, fee: 35, freeOver: 500, areas: 'Livingstone and nationwide by courier', pickup: false },
+    verification: {
+      status: 'pending',
+      businessName: 'Amber & Oud',
+      idNumber: '123456/10/1',
+      note: 'Registered with PACRA in 2025.',
+      submittedAt: '2026-02-01T09:00:00.000Z'
+    }
   },
   {
     id: 'customer-demo',
@@ -43,8 +58,25 @@ const seedUsers = [
     email: 'customer@shopverse.com',
     password: DEMO_PASSWORD,
     role: 'customer'
+  },
+  {
+    id: 'admin-demo',
+    name: 'ShopVerse Admin',
+    email: 'admin@shopverse.com',
+    password: DEMO_PASSWORD,
+    role: 'admin'
   }
 ];
+
+// Demo payment accounts shown at checkout in development. Production values come from
+// environment variables (see .env.example); these are clearly fake.
+const demoPaymentAccounts = {
+  accountName: 'ShopVerse Payments (demo)',
+  mtn: '096 000 0000',
+  airtel: '097 000 0000',
+  zamtel: '095 000 0000',
+  bank: 'Demo Bank · Account 0000000000 · Branch Lusaka'
+};
 
 const product = (id, shopId, sortOrder, name, category, price, stock, description) => ({
   id,
@@ -72,4 +104,4 @@ const seedProducts = [
   product('prod-10', 'shop-owner-demo-3', 2, 'Botanical Face Oil', 'Beauty & skincare', 210, 2, 'Lightweight blend of marula and baobab oils for a natural glow.')
 ];
 
-module.exports = { seedUsers, seedProducts };
+module.exports = { seedUsers, seedProducts, demoPaymentAccounts };

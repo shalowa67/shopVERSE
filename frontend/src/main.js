@@ -26,26 +26,44 @@ const PAYMENT_GROUPS = [
     ]
   },
   {
-    title: 'Card',
-    options: [
-      { value: 'visa', label: 'Visa', hint: 'Debit or credit', badge: 'VISA' },
-      { value: 'mastercard', label: 'Mastercard', hint: 'Debit or credit', badge: 'MC' },
-      { value: 'zanaco_card', label: 'Zanaco card', hint: 'Zanaco debit card', badge: 'ZNC' },
-      { value: 'zambia_credit_card', label: 'Other Zambian card', hint: 'Any local bank card', badge: 'ZM' }
-    ]
-  },
-  {
     title: 'Other',
     options: [
-      { value: 'bank_transfer', label: 'Bank transfer', hint: 'Shop shares bank details', badge: 'EFT' },
-      { value: 'cash_on_delivery', label: 'Cash on delivery', hint: 'Pay when it arrives', badge: 'COD' }
+      { value: 'bank_transfer', label: 'Bank transfer', hint: 'Protected by ShopVerse', badge: 'EFT' },
+      { value: 'cash_on_delivery', label: 'Cash on delivery', hint: 'Pay the shop when it arrives', badge: 'COD' }
     ]
   }
 ];
+// Card payments need an online payment provider; until one is connected they are not offered.
 const PAYMENT_LABELS = Object.fromEntries(
   PAYMENT_GROUPS.flatMap((group) => group.options.map((option) => [option.value, option.label]))
-    .concat([['card', 'Card'], ['wallet', 'Wallet'], ['standard_chartered_card', 'Standard Chartered card']])
+    .concat([
+      ['card', 'Card'], ['visa', 'Visa'], ['mastercard', 'Mastercard'], ['zanaco_card', 'Zanaco card'],
+      ['zambia_credit_card', 'Zambian card'], ['wallet', 'Wallet'], ['standard_chartered_card', 'Standard Chartered card']
+    ])
 );
+const PROTECTION_DAYS = 3;
+
+const PAYOUT_LABELS = {
+  awaiting_payment: { label: 'Waiting for payment', tone: 'warning', hint: "Don't ship yet: the customer hasn't paid." },
+  held: { label: 'Payment secured', tone: 'success', hint: 'ShopVerse holds the money. Ship now; you are paid once the customer receives it.' },
+  on_hold: { label: 'On hold: problem reported', tone: 'danger', hint: 'ShopVerse is reviewing a problem the customer reported.' },
+  ready: { label: 'Payout ready', tone: 'brand', hint: 'ShopVerse will send your money shortly.' },
+  paid: { label: 'Paid out', tone: 'success', hint: 'ShopVerse has sent you this money.' },
+  refund_due: { label: 'Refund due', tone: 'warning', hint: 'The customer is being refunded.' },
+  refunded: { label: 'Refunded', tone: '', hint: 'The customer was refunded.' },
+  cancelled: { label: 'Cancelled', tone: '', hint: '' },
+  not_applicable: { label: 'Cash on delivery', tone: '', hint: 'Collect payment from the customer on delivery.' }
+};
+
+const PAYMENT_STATUS_LABELS = {
+  pending: 'Awaiting payment',
+  submitted: 'Checking your payment',
+  held: 'Paid · protected',
+  refund_due: 'Refund in progress',
+  refunded: 'Refunded',
+  cancelled: 'Cancelled',
+  pay_on_delivery: 'Pay on delivery'
+};
 
 const state = {
   user: null,
@@ -276,7 +294,13 @@ const ICONS = {
   share: '<path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 12v8h14v-8"/>',
   device: '<rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/>',
   monitor: '<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
-  wifi: '<path d="M2 9a15 15 0 0 1 20 0"/><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M12 19.5h.01"/>'
+  wifi: '<path d="M2 9a15 15 0 0 1 20 0"/><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M12 19.5h.01"/>',
+  whatsapp: '<path d="M3.5 20.5 5 16a8.5 8.5 0 1 1 3.2 3.1z"/><path d="M9 8.8c0 3 2.6 6.2 6 6.4l1-1.4-1.9-1-1 .8a4 4 0 0 1-2.1-2.1l.8-1-1-1.9z"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  flag: '<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 14a6.5 6.5 0 0 1 3.5 6"/>',
+  repeat: '<path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>'
 };
 
 const icon = (name, className = 'icon') => `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
@@ -286,6 +310,43 @@ const icon = (name, className = 'icon') => `<svg class="${className}" viewBox="0
 // ---------------------------------------------------------------------------
 
 const canBuy = () => !state.user || state.user.role === 'customer';
+
+// Where each kind of account lands after signing in.
+const homePathFor = (user) => {
+  if (user && user.role === 'admin') return '/admin';
+  if (user && user.role === 'shop_owner') return '/studio';
+  return '/';
+};
+
+const verifiedBadge = (verified, { compact = false } = {}) => (verified
+  ? `<span class="verified-badge" title="Verified seller: ShopVerse checked this seller's identity">${icon('check')}${compact ? '' : ' Verified'}</span>`
+  : '');
+
+// Links -----------------------------------------------------------------------
+
+const absoluteUrl = (path) => (isBrowser ? new URL(path, location.origin).href : path);
+const whatsappShareUrl = (message) => `https://wa.me/?text=${encodeURIComponent(message)}`;
+const whatsappChatUrl = (digits, message = '') => (digits
+  ? `https://wa.me/${encodeURIComponent(digits)}${message ? `?text=${encodeURIComponent(message)}` : ''}`
+  : '');
+
+const shareButtons = ({ path, title, text }) => `
+  <div class="share-row">
+    <button type="button" class="button button-outline button-sm" data-action="share" data-path="${h(path)}" data-title="${h(title)}" data-text="${h(text)}">${icon('share')} Share</button>
+    <a class="button button-whatsapp button-sm" href="${h(whatsappShareUrl(`${text} ${absoluteUrl(path)}`))}" target="_blank" rel="noopener">${icon('whatsapp')} WhatsApp</a>
+    <button type="button" class="icon-button" data-action="copy-link" data-path="${h(path)}" aria-label="Copy link" title="Copy link">${icon('link')}</button>
+  </div>`;
+
+const deliverySummary = (delivery) => {
+  if (!delivery) return '';
+  const parts = [];
+  if (delivery.enabled) {
+    parts.push(delivery.fee > 0 ? `Delivery ${formatMoney(delivery.fee)}` : 'Free delivery');
+    if (delivery.fee > 0 && delivery.freeOver) parts.push(`free over ${formatMoney(delivery.freeOver)}`);
+  }
+  if (delivery.pickup) parts.push(delivery.enabled ? 'or free pickup' : 'Pickup only');
+  return parts.join(', ');
+};
 
 const mediaMarkup = (image, name, alt = '') => {
   const url = safeImageUrl(image);
@@ -316,7 +377,7 @@ const productCard = (product) => `
       <div class="product-badges">${stockBadge(product)}</div>
     </a>
     <div class="product-body">
-      <a class="product-shop" href="/shops/${encodeURIComponent(product.shopId)}">${h(product.shopName)}</a>
+      <a class="product-shop" href="/shops/${encodeURIComponent(product.shopId)}">${h(product.shopName)} ${verifiedBadge(product.shopVerified, { compact: true })}</a>
       <h3 class="product-title"><a href="/products/${encodeURIComponent(product.id)}">${h(product.name)}</a></h3>
       ${ratingMarkup(product.averageRating, product.reviewCount)}
       <div class="product-foot">
@@ -334,9 +395,10 @@ const shopCard = (shop) => {
     <div class="shop-body">
       <div class="shop-avatar">${avatarMarkup(shop.profileImage, shop.name)}</div>
       <div>
-        <h3><a href="/shops/${encodeURIComponent(shop.id)}">${h(shop.name)}</a></h3>
+        <h3><a href="/shops/${encodeURIComponent(shop.id)}">${h(shop.name)}</a> ${verifiedBadge(shop.verified)}</h3>
         <div class="meta-row" style="margin-top: 4px">
           <span>${icon('pin')} ${h(shop.location)}</span>
+          ${shop.delivery ? `<span>${icon('truck')} ${h(deliverySummary(shop.delivery))}</span>` : ''}
         </div>
       </div>
       <p>${h(shop.description || 'Independent seller on ShopVerse.')}</p>
@@ -562,8 +624,11 @@ function renderChrome() {
   $$('[data-auth]').forEach((element) => {
     element.hidden = element.dataset.auth !== role;
   });
+  $$('[data-admin]').forEach((element) => {
+    element.hidden = !(state.user && state.user.isAdmin);
+  });
 
-  $('#cartButton').hidden = role === 'shop_owner';
+  $('#cartButton').hidden = !(role === 'guest' || role === 'customer');
   $('#notificationsButton').hidden = !state.user;
 
   const cartBadge = $('#cartBadge');
@@ -626,7 +691,8 @@ function toggleAccountMenu() {
     ${isOwner
       ? `<a href="/studio" role="menuitem">${icon('chart')} Seller studio</a>
          <a href="/shops/${encodeURIComponent(state.user.id)}" role="menuitem">${icon('store')} View my storefront</a>`
-      : `<a href="/orders" role="menuitem">${icon('receipt')} My orders</a>`}
+      : state.user.role === 'customer' ? `<a href="/orders" role="menuitem">${icon('receipt')} My orders</a>` : ''}
+    ${state.user.isAdmin ? `<a href="/admin" role="menuitem">${icon('shield')} Admin dashboard</a>` : ''}
     <a href="/account" role="menuitem">${icon('settings')} Account settings</a>
     <button type="button" role="menuitem" data-action="logout">${icon('logout')} Sign out</button>`;
   $('#siteHeader').appendChild(menu);
@@ -744,8 +810,9 @@ function renderCartDrawer() {
 
   foot.innerHTML = `
     <div class="summary-row"><span>Subtotal</span><span>${formatMoney(state.cart.subtotal)}</span></div>
-    <div class="summary-row"><span>Delivery</span><span class="muted">Arranged by each shop</span></div>
-    <div class="summary-row total"><span>Total</span><strong>${formatMoney(state.cart.subtotal)}</strong></div>
+    <div class="summary-row"><span>Delivery</span><span>${state.cart.deliveryTotal ? formatMoney(state.cart.deliveryTotal) : 'Free'}</span></div>
+    <div class="summary-row total"><span>Total</span><strong>${formatMoney(state.cart.total ?? state.cart.subtotal)}</strong></div>
+    <p class="protect-line">${icon('lock')} Protected payment: the seller is paid only after you receive your order.</p>
     <a href="/checkout" class="button button-primary button-lg button-block" style="margin-top: 14px" data-action="close-drawer" ${hasProblems ? 'aria-disabled="true"' : ''}>
       Checkout ${icon('arrow')}
     </a>`;
@@ -810,7 +877,8 @@ const routes = [
   [/^\/orders\/?$/, viewOrders],
   [/^\/studio\/?$/, viewStudio],
   [/^\/account\/?$/, viewAccount],
-  [/^\/install\/?$/, viewInstall]
+  [/^\/install\/?$/, viewInstall],
+  [/^\/admin\/?$/, viewAdmin]
 ];
 
 function navigate(url, { replace = false } = {}) {
@@ -855,7 +923,7 @@ const requireRole = (role) => {
     return false;
   }
   if (role && state.user.role !== role) {
-    navigate(state.user.role === 'shop_owner' ? '/studio' : '/', { replace: true });
+    navigate(homePathFor(state.user), { replace: true });
     return false;
   }
   return true;
@@ -1131,7 +1199,7 @@ async function viewProduct({ id, params }) {
         <div class="pd-info">
           <a class="pd-shop" href="/shops/${encodeURIComponent(product.shopId)}">
             <span class="avatar" style="background:${safeColor(product.shopThemeColor)}">${h(initials(product.shopName).slice(0, 1))}</span>
-            ${h(product.shopName)}
+            ${h(product.shopName)} ${verifiedBadge(product.shopVerified)}
           </a>
           <h1>${h(product.name)}</h1>
           <div class="meta-row">
@@ -1145,11 +1213,25 @@ async function viewProduct({ id, params }) {
               : '<span class="badge badge-danger">Sold out</span>'}
           </div>
           <div class="pd-buy">${buyBox}</div>
+          <div class="pd-actions">
+            ${shareButtons({
+              path: `/products/${encodeURIComponent(product.id)}`,
+              title: product.name,
+              text: `${product.name} for ${formatMoney(product.price)} at ${product.shopName} on ShopVerse:`
+            })}
+            ${product.shop && product.shop.whatsapp && !isOwnProduct ? `
+              <a class="button button-ghost button-sm" target="_blank" rel="noopener"
+                 href="${h(whatsappChatUrl(product.shop.whatsapp, `Hi ${product.shopName}, I'm interested in "${product.name}" on ShopVerse: ${absoluteUrl(`/products/${encodeURIComponent(product.id)}`)}`))}">
+                ${icon('whatsapp')} Ask the seller
+              </a>` : ''}
+          </div>
           <div class="pd-description">${h(product.description || 'The seller has not added a description yet.')}</div>
           <div class="pd-perks">
-            <div>${icon('truck')} Delivery arranged directly by ${h(product.shopName)}${product.shopLocation ? ` from ${h(product.shopLocation)}` : ''}</div>
-            <div>${icon('wallet')} Pay with mobile money, card, bank transfer or cash on delivery</div>
-            <div>${icon('shield')} Cancel free of charge until the shop confirms your order</div>
+            <div>${icon('lock')} <span><strong>Protected payment.</strong> Pay ShopVerse by mobile money; the seller is paid only after you receive your order.</span></div>
+            <div>${icon('truck')} ${product.shop && product.shop.delivery
+              ? `${h(deliverySummary(product.shop.delivery))}${product.shop.delivery.areas ? ` · ${h(product.shop.delivery.areas)}` : ''}`
+              : `Delivery arranged by ${h(product.shopName)}`}${product.shopLocation ? ` · ships from ${h(product.shopLocation)}` : ''}</div>
+            <div>${icon('shield')} ${product.shopVerified ? 'Verified seller: ShopVerse has checked their identity' : 'Cancel free of charge until the shop confirms your order'}</div>
           </div>
         </div>
       </div>
@@ -1252,16 +1334,22 @@ async function viewShop({ id, params }) {
       <div class="container storefront-info">
         <div class="shop-avatar">${avatarMarkup(shop.profileImage, shop.name)}</div>
         <div class="storefront-text">
-          <h1>${h(shop.name)}</h1>
+          <h1>${h(shop.name)} ${verifiedBadge(shop.verified)}</h1>
           <p>${h(shop.description || '')}</p>
           <div class="meta-row">
             <span>${icon('pin')} ${h(shop.location)}</span>
             <span>${icon('user')} Run by ${h(shop.owner)}</span>
             <span>${icon('box')} ${plural(shop.productCount, 'product')}</span>
+            <span>${icon('truck')} ${h(deliverySummary(shop.delivery))}</span>
             ${shop.reviewCount ? ratingMarkup(shop.averageRating, shop.reviewCount) : ''}
           </div>
+          ${shop.delivery && shop.delivery.areas ? `<p class="muted" style="font-size:.85rem;margin-top:6px">Delivers to: ${h(shop.delivery.areas)}</p>` : ''}
         </div>
-        ${isMine ? `<a href="/studio?tab=profile" class="button button-outline">${icon('edit')} Edit storefront</a>` : ''}
+        <div class="storefront-actions">
+          ${isMine ? `<a href="/studio?tab=profile" class="button button-outline button-sm">${icon('edit')} Edit storefront</a>` : ''}
+          ${shop.whatsapp && !isMine ? `<a class="button button-whatsapp button-sm" target="_blank" rel="noopener" href="${h(whatsappChatUrl(shop.whatsapp, `Hi ${shop.name}, I found your shop on ShopVerse.`))}">${icon('whatsapp')} Chat on WhatsApp</a>` : ''}
+          ${shareButtons({ path: `/shops/${encodeURIComponent(shop.id)}`, title: shop.name, text: `Check out ${shop.name} on ShopVerse:` })}
+        </div>
       </div>
     </section>
     <div class="container section-tight">
@@ -1309,7 +1397,7 @@ function renderShopProducts() {
 
 async function viewAuth(mode, { query }) {
   if (state.user) {
-    navigate(state.user.role === 'shop_owner' ? '/studio' : '/', { replace: true });
+    navigate(homePathFor(state.user), { replace: true });
     return;
   }
   const isRegister = mode === 'register';
@@ -1383,7 +1471,7 @@ async function completeSignIn(result, { isNewShop = false } = {}) {
   renderChrome();
   const destination = isNewShop
     ? '/studio?welcome=1'
-    : state.redirectAfterLogin || (result.user.role === 'shop_owner' ? '/studio' : '/');
+    : state.redirectAfterLogin || homePathFor(result.user);
   state.redirectAfterLogin = null;
   toast(`Welcome${isNewShop ? '' : ' back'}, ${result.user.name.split(' ')[0]}!`, 'success');
   navigate(destination, { replace: true });
@@ -1437,11 +1525,64 @@ const readRemembered = () => {
   }
 };
 
+async function loadPaymentInfo() {
+  if (!state.paymentInfo) {
+    const { payment } = await apiRequest('/api/payment-info');
+    state.paymentInfo = payment;
+  }
+  return state.paymentInfo;
+}
+
+const fulfilmentOptions = (shop) => {
+  const options = [];
+  if (shop.delivery.enabled) {
+    options.push({
+      value: 'delivery',
+      label: 'Delivery',
+      price: shop.deliveryFee > 0 ? formatMoney(shop.deliveryFee) : 'Free',
+      hint: shop.delivery.areas || (shop.delivery.freeOver && shop.deliveryFee > 0 ? `Free over ${formatMoney(shop.delivery.freeOver)}` : 'To your address')
+    });
+  }
+  if (shop.delivery.pickup) {
+    options.push({ value: 'pickup', label: 'Pickup', price: 'Free', hint: `Collect from ${shop.location || 'the shop'}` });
+  }
+  return options;
+};
+
+// Recalculates delivery and total when the customer switches delivery/pickup.
+function checkoutSelection(form) {
+  const methods = {};
+  let deliveryTotal = 0;
+  state.cart.shops.forEach((shop) => {
+    const field = form.elements[`fulfil-${shop.shopId}`];
+    const method = (field && field.value) || shop.defaultMethod;
+    methods[shop.shopId] = method;
+    if (method === 'delivery') deliveryTotal += shop.deliveryFee;
+  });
+  const total = Math.round((state.cart.subtotal + deliveryTotal) * 100) / 100;
+  return { methods, deliveryTotal, total, needsAddress: Object.values(methods).includes('delivery') };
+}
+
+function updateCheckoutSummary() {
+  const form = $('form[data-form="checkout"]');
+  if (!form) return;
+  const selection = checkoutSelection(form);
+  $('#sumDelivery').textContent = selection.deliveryTotal ? formatMoney(selection.deliveryTotal) : 'Free';
+  $('#sumTotal').textContent = formatMoney(selection.total);
+  $('#placeOrderTotal').textContent = formatMoney(selection.total);
+  const addressField = $('#addressField');
+  addressField.hidden = !selection.needsAddress;
+  addressField.querySelector('textarea').required = selection.needsAddress;
+  const method = (form.elements.paymentMethod && form.elements.paymentMethod.value) || '';
+  $('#protectNotice').hidden = method === 'cash_on_delivery';
+  $('#codNotice').hidden = method !== 'cash_on_delivery';
+}
+
 async function viewCheckout({ id }) {
   if (!requireRole('customer')) return;
   setTitle('Checkout');
   setView(loader);
-  await loadCart();
+  const [, paymentInfo] = await Promise.all([loadCart(), loadPaymentInfo()]);
   if (stale(id)) return;
   renderChrome();
 
@@ -1452,35 +1593,60 @@ async function viewCheckout({ id }) {
 
   const remembered = readRemembered();
   const problems = state.cart.items.filter((item) => !item.available);
-  const shops = new Set(state.cart.items.map((item) => item.shopId));
+  const shops = state.cart.shops;
+  const days = paymentInfo.protectionDays || PROTECTION_DAYS;
+  const offered = PAYMENT_GROUPS.flatMap((group) => group.options.map((option) => option.value));
+  const selectedMethod = offered.includes(remembered.paymentMethod) ? remembered.paymentMethod : 'mtn_mobile_money';
 
   setView(`
     <div class="container">
-      <div class="page-head"><h1>Checkout</h1><p>Review your details and place your order.</p></div>
+      <div class="page-head"><h1>Checkout</h1><p>Review your order, choose delivery and pay safely.</p></div>
       <form class="checkout-layout section-tight" data-form="checkout" novalidate>
         <div>
           <section class="card card-pad checkout-section">
-            <h2><span class="step-num">1</span> Delivery details</h2>
-            <div class="form-grid two">
+            <h2><span class="step-num">1</span> Delivery</h2>
+            ${shops.map((shop) => {
+              const options = fulfilmentOptions(shop);
+              return `
+                <div class="fulfil-shop">
+                  <div class="fulfil-shop-head"><strong>${h(shop.shopName)}</strong> ${verifiedBadge(shop.verified)}<span class="muted">${formatMoney(shop.subtotal)}</span></div>
+                  <div class="option-grid">
+                    ${options.map((option) => `
+                      <label class="option-card">
+                        <input type="radio" name="fulfil-${h(shop.shopId)}" value="${option.value}" data-change="checkout-summary" ${shop.defaultMethod === option.value ? 'checked' : ''} />
+                        <span class="oc-icon">${icon(option.value === 'pickup' ? 'store' : 'truck')}</span>
+                        <div><strong>${option.label} · ${h(option.price)}</strong><small>${h(option.hint)}</small></div>
+                      </label>`).join('')}
+                  </div>
+                </div>`;
+            }).join('')}
+            <div class="form-grid two" style="margin-top: 18px">
               <label class="field"><span>Full name</span><input type="text" value="${h(state.user.name)}" disabled /></label>
-              <label class="field"><span>Phone number</span><input type="tel" name="contactPhone" autocomplete="tel" placeholder="+260 97 123 4567" value="${h(remembered.contactPhone || '')}" /></label>
-              <label class="field full"><span>Delivery address</span><textarea name="shippingAddress" rows="3" maxlength="300" autocomplete="street-address" placeholder="House/plot number, street, area, town" required>${h(remembered.shippingAddress || '')}</textarea></label>
+              <label class="field"><span>Phone / WhatsApp</span><input type="tel" name="contactPhone" autocomplete="tel" placeholder="097 123 4567" value="${h(remembered.contactPhone || '')}" /></label>
+              <label class="field full" id="addressField"><span>Delivery address</span><textarea name="shippingAddress" rows="3" maxlength="300" autocomplete="street-address" placeholder="House/plot number, street, area, town" required>${h(remembered.shippingAddress || '')}</textarea></label>
               <label class="field full"><span>Note for the seller <span class="hint">· optional</span></span><input type="text" name="note" maxlength="500" placeholder="e.g. Call when you arrive at the gate" /></label>
             </div>
           </section>
           <section class="card card-pad checkout-section">
-            <h2><span class="step-num">2</span> Payment method</h2>
+            <h2><span class="step-num">2</span> Payment</h2>
             ${PAYMENT_GROUPS.map((group) => `
               <div class="option-group-title">${h(group.title)}</div>
               <div class="option-grid">
                 ${group.options.map((option) => `
                   <label class="option-card">
-                    <input type="radio" name="paymentMethod" value="${option.value}" ${(remembered.paymentMethod || 'mtn_mobile_money') === option.value ? 'checked' : ''} />
+                    <input type="radio" name="paymentMethod" value="${option.value}" data-change="checkout-summary" ${selectedMethod === option.value ? 'checked' : ''} />
                     <span class="oc-icon">${h(option.badge)}</span>
                     <div><strong>${h(option.label)}</strong><small>${h(option.hint)}</small></div>
                   </label>`).join('')}
               </div>`).join('')}
-            <div class="notice" style="margin-top: 18px">${icon('info')}<span>Online payment is not connected yet. After you order, the shop will contact you to complete payment using the method you choose.</span></div>
+            <div class="protect-box" id="protectNotice" style="margin-top: 18px">
+              <div class="protect-icon">${icon('lock')}</div>
+              <div>
+                <strong>Protected payment</strong>
+                <p>You pay ShopVerse, not the seller. We hold the money and only pay the seller after you confirm you received your order. If something is wrong, report it within ${days} days and you get your money back.</p>
+              </div>
+            </div>
+            <div class="notice" id="codNotice" style="margin-top: 18px" hidden>${icon('info')}<span>Pay the shop in cash when your order arrives. Cash on delivery is not covered by protected payment.</span></div>
           </section>
         </div>
         <aside class="card card-pad summary-card">
@@ -1494,20 +1660,22 @@ async function viewCheckout({ id }) {
               </div>`).join('')}
           </div>
           <div class="summary-row"><span>Subtotal</span><span>${formatMoney(state.cart.subtotal)}</span></div>
-          <div class="summary-row"><span>Delivery</span><span class="muted">Agreed with ${shops.size > 1 ? 'each shop' : 'the shop'}</span></div>
-          <div class="summary-row total"><span>Total</span><strong>${formatMoney(state.cart.subtotal)}</strong></div>
-          ${shops.size > 1 ? `<p class="muted" style="font-size:.8rem;margin-top:10px">Your order includes ${shops.size} shops. Each one ships its items separately.</p>` : ''}
+          <div class="summary-row"><span>Delivery</span><span id="sumDelivery">${state.cart.deliveryTotal ? formatMoney(state.cart.deliveryTotal) : 'Free'}</span></div>
+          <div class="summary-row total"><span>Total</span><strong id="sumTotal">${formatMoney(state.cart.total)}</strong></div>
+          ${shops.length > 1 ? `<p class="muted" style="font-size:.8rem;margin-top:10px">Your order includes ${shops.length} shops. Each one sends its items separately.</p>` : ''}
           ${problems.length ? `<div class="notice notice-warning" style="margin-top:14px">${icon('alert')}<span>Some items are no longer available in the quantity you chose. <button type="button" class="link" data-action="open-cart">Update your cart</button>.</span></div>` : ''}
-          <button type="submit" class="button button-primary button-lg button-block" style="margin-top: 16px" ${problems.length ? 'disabled' : ''}>Place order · ${formatMoney(state.cart.subtotal)}</button>
-          <p class="muted" style="font-size:.78rem;text-align:center;margin-top:10px">${icon('shield', 'icon')} You can cancel free of charge until the shop confirms.</p>
+          <button type="submit" class="button button-primary button-lg button-block" style="margin-top: 16px" ${problems.length ? 'disabled' : ''}>Place order · <span id="placeOrderTotal">${formatMoney(state.cart.total)}</span></button>
+          <p class="muted" style="font-size:.78rem;text-align:center;margin-top:10px">You can cancel free of charge until the shop confirms.</p>
         </aside>
       </form>
     </div>`);
+  updateCheckoutSummary();
 }
 
 async function submitCheckout(form) {
   const data = Object.fromEntries(new FormData(form).entries());
-  if (!String(data.shippingAddress || '').trim()) {
+  const selection = checkoutSelection(form);
+  if (selection.needsAddress && !String(data.shippingAddress || '').trim()) {
     toast('Please enter a delivery address.', 'error');
     form.elements.shippingAddress.focus();
     return;
@@ -1515,7 +1683,16 @@ async function submitCheckout(form) {
   const button = form.querySelector('[type=submit]');
   try {
     setBusy(button, true);
-    const { order } = await apiRequest('/api/orders', { method: 'POST', body: data });
+    const { order } = await apiRequest('/api/orders', {
+      method: 'POST',
+      body: {
+        shippingAddress: selection.needsAddress ? data.shippingAddress : '',
+        contactPhone: data.contactPhone,
+        note: data.note,
+        paymentMethod: data.paymentMethod,
+        fulfilment: selection.methods
+      }
+    });
     try {
       defaultStorage()?.setItem(addressKey, JSON.stringify({
         shippingAddress: data.shippingAddress,
@@ -1525,7 +1702,7 @@ async function submitCheckout(form) {
     } catch (error) {
       // Remembering the address is a convenience only.
     }
-    state.cart = { items: [], itemCount: 0, subtotal: 0 };
+    state.cart = { items: [], shops: [], itemCount: 0, subtotal: 0, deliveryTotal: 0, total: 0 };
     loadUnreadCount().then(renderChrome).catch(() => {});
     renderChrome();
     navigate(`/orders?placed=${encodeURIComponent(order.id)}`, { replace: true });
@@ -1544,9 +1721,73 @@ const progressMarkup = (status) => (status === 'cancelled' ? '' : `
     ${ORDER_FLOW.map((step, index) => `<div class="progress-step ${index <= ORDER_FLOW.indexOf(status) ? 'done' : ''}">${step}</div>`).join('')}
   </div>`);
 
+const paymentBox = (order) => {
+  const instructions = order.paymentInstructions;
+  if (order.canSubmitPayment && instructions) {
+    const methodLabel = PAYMENT_LABELS[order.paymentMethod] || 'mobile money';
+    return `
+      <div class="pay-box">
+        <div class="pay-box-head">${icon('wallet')}<strong>Complete your payment</strong></div>
+        ${instructions.contactFirst
+          ? `<p>ShopVerse will contact you${order.contactPhone ? ` on ${h(order.contactPhone)}` : ''} with payment details for ${h(methodLabel)}.</p>`
+          : `<ol class="pay-steps">
+              <li>Send <strong>${formatMoney(instructions.amount)}</strong> by ${h(methodLabel)} to <strong>${h(instructions.account)}</strong> (${h(instructions.accountName)}).</li>
+              <li>Use reference <strong class="pay-ref">${h(instructions.reference)}</strong>.</li>
+              <li>Enter the transaction ID from your confirmation message below.</li>
+            </ol>`}
+        <form class="pay-form" data-form="submit-payment" data-id="${h(order.id)}">
+          <input type="text" name="transactionId" maxlength="60" placeholder="Transaction ID, e.g. MP240101.1234.A56789" aria-label="Transaction ID" required />
+          <button type="submit" class="button button-primary button-sm">I've paid</button>
+        </form>
+        <p class="muted" style="font-size:.8rem">${icon('lock')} Your money is held by ShopVerse and only released to the seller after you receive your order.</p>
+      </div>`;
+  }
+  if (order.paymentStatus === 'submitted') {
+    return `<div class="notice">${icon('info')}<span>We're checking your payment${order.payment && order.payment.transactionId ? ` (transaction ${h(order.payment.transactionId)})` : ''}. You'll get a notification once it's confirmed.</span></div>`;
+  }
+  if (order.paymentStatus === 'held') {
+    return `<div class="notice notice-success">${icon('lock')}<span><strong>Payment protected.</strong> ShopVerse is holding your money. The seller is paid after you confirm you received your order.</span></div>`;
+  }
+  if (order.paymentStatus === 'refund_due') {
+    return `<div class="notice notice-warning">${icon('info')}<span>Your refund is being processed. ShopVerse will send the money back to you.</span></div>`;
+  }
+  return '';
+};
+
+const shipmentMarkup = (order, entry) => {
+  const resolvedText = entry.dispute && entry.dispute.resolvedAt
+    ? entry.dispute.resolution === 'refund' ? 'ShopVerse resolved your report with a refund.' : 'ShopVerse reviewed your report and released payment to the seller.'
+    : '';
+  return `
+    <div class="shipment">
+      <div class="shipment-head">
+        <div><strong>${h(entry.shopName)}</strong>
+          <span class="muted">${entry.method === 'pickup'
+            ? `Pickup${entry.pickupLocation ? ` at ${h(entry.pickupLocation)}` : ''}`
+            : `Delivery${entry.deliveryFee ? ` · ${formatMoney(entry.deliveryFee)}` : ' · free'}`}</span>
+        </div>
+        ${statusPill(entry.status)}
+      </div>
+      ${entry.dispute && !entry.dispute.resolvedAt ? `<p class="shipment-note warn">${icon('flag')} You reported a problem. Payment is on hold while ShopVerse reviews it.</p>` : ''}
+      ${resolvedText ? `<p class="shipment-note">${h(resolvedText)}</p>` : ''}
+      ${entry.confirmedAt ? `<p class="shipment-note ok">${icon('checkCircle')} You confirmed receiving this on ${h(formatDate(entry.confirmedAt))}.</p>` : ''}
+      ${entry.canConfirm && entry.autoConfirmAt && order.payment && order.payment.protected
+        ? `<p class="shipment-note">Not received? Report it before ${h(formatDate(entry.autoConfirmAt))}, when payment is released automatically.</p>` : ''}
+      <div class="shipment-actions">
+        ${entry.canConfirm ? `<button type="button" class="button button-primary button-xs" data-action="confirm-receipt" data-id="${h(order.id)}" data-shop="${h(entry.shopId)}">${icon('check')} I received it</button>` : ''}
+        ${entry.canDispute ? `<button type="button" class="button button-ghost button-xs" data-action="open-dispute" data-id="${h(order.id)}" data-shop="${h(entry.shopId)}" data-shop-name="${h(entry.shopName)}">${icon('flag')} Report a problem</button>` : ''}
+        ${entry.whatsapp ? `<a class="button button-ghost button-xs" target="_blank" rel="noopener" href="${h(whatsappChatUrl(entry.whatsapp, `Hi ${entry.shopName}, about my ShopVerse order #${shortId(order.id)}`))}">${icon('whatsapp')} Message shop</a>` : ''}
+      </div>
+    </div>`;
+};
+
 async function viewOrders({ id, query }) {
   if (state.user && state.user.role === 'shop_owner') {
     navigate('/studio?tab=orders', { replace: true });
+    return;
+  }
+  if (state.user && state.user.role === 'admin') {
+    navigate('/admin?tab=payments', { replace: true });
     return;
   }
   if (!requireRole('customer')) return;
@@ -1555,37 +1796,40 @@ async function viewOrders({ id, query }) {
   const { orders } = await apiRequest('/api/my-orders');
   if (stale(id)) return;
   const placed = query.get('placed');
+  const placedOrder = placed && orders.find((order) => order.id === placed);
 
   setView(`
     <div class="container">
-      <div class="page-head"><h1>My orders</h1><p>Track deliveries and review your purchase history.</p></div>
-      ${placed ? `<div class="notice notice-success fade-up" style="margin: 16px 0 4px">${icon('checkCircle')}<span><strong>Thank you! Your order #${h(shortId(placed))} has been placed.</strong> The shop will be in touch to confirm delivery and payment.</span></div>` : ''}
+      <div class="page-head"><h1>My orders</h1><p>Pay, track deliveries and confirm when your items arrive.</p></div>
+      ${placed ? `<div class="notice notice-success fade-up" style="margin: 16px 0 4px">${icon('checkCircle')}<span><strong>Thank you! Your order #${h(shortId(placed))} has been placed.</strong> ${
+        placedOrder && placedOrder.canSubmitPayment ? 'Complete your payment below so the shop can send it.' : 'The shop will be in touch to arrange delivery.'}</span></div>` : ''}
       <div class="order-list section-tight">
         ${orders.length ? orders.map((order) => `
-          <article class="card order-card">
+          <article class="card order-card" id="order-${h(order.id)}">
             <div class="order-head">
               <div class="order-head-meta">
                 <div><span>Order</span><strong>#${h(shortId(order.id))}</strong></div>
                 <div><span>Placed</span><strong>${h(formatDate(order.createdAt))}</strong></div>
                 <div><span>Total</span><strong>${formatMoney(order.total)}</strong></div>
-                <div><span>Payment</span><strong>${h(PAYMENT_LABELS[order.paymentMethod] || order.paymentMethod)} · ${h(order.paymentStatus)}</strong></div>
+                <div><span>Payment</span><strong>${h(PAYMENT_LABELS[order.paymentMethod] || order.paymentMethod)} · ${h(PAYMENT_STATUS_LABELS[order.paymentStatus] || order.paymentStatus)}</strong></div>
               </div>
               ${statusPill(order.status)}
             </div>
             ${progressMarkup(order.status)}
             <div class="order-body">
               <div class="order-lines">
+                ${paymentBox(order)}
                 ${order.items.map((item) => `
                   <div class="order-line">
                     <div class="thumb thumb-sm"><div class="placeholder-art">${h(initials(item.productName))}</div></div>
                     <div class="ol-text"><a href="/products/${encodeURIComponent(item.productId)}"><strong>${h(item.productName)}</strong></a><span>${h(item.shopName)} · Qty ${h(item.quantity)}</span></div>
                     <strong>${formatMoney(item.price * item.quantity)}</strong>
                   </div>`).join('')}
+                ${order.deliveryTotal ? `<div class="order-line order-line-fee"><div class="ol-text">Delivery</div><strong>${formatMoney(order.deliveryTotal)}</strong></div>` : ''}
               </div>
               <div class="order-aside">
-                <div><h4>Deliver to</h4><p>${h(order.shippingAddress)}${order.contactPhone ? `\n${h(order.contactPhone)}` : ''}</p></div>
-                ${order.fulfillments.length > 1 ? `
-                  <div><h4>Shipments</h4><div class="fulfilment-list">${order.fulfillments.map((entry) => `<div><span>${h(entry.shopName)}</span>${statusPill(entry.status)}</div>`).join('')}</div></div>` : ''}
+                ${order.shippingAddress ? `<div><h4>Deliver to</h4><p>${h(order.shippingAddress)}${order.contactPhone ? `\n${h(order.contactPhone)}` : ''}</p></div>` : ''}
+                <div><h4>${order.fulfillments.length > 1 ? 'Shipments' : 'Shipment'}</h4><div class="shipment-list">${order.fulfillments.map((entry) => shipmentMarkup(order, entry)).join('')}</div></div>
               </div>
             </div>
             ${order.canCancel ? `
@@ -1596,6 +1840,79 @@ async function viewOrders({ id, query }) {
           </article>`).join('') : emptyState({ iconName: 'receipt', title: 'No orders yet', text: 'When you place an order it will appear here so you can track it.', action: '<a href="/products" class="button button-primary">Start shopping</a>' })}
       </div>
     </div>`);
+
+  if (placed) $(`#order-${CSS.escape(placed)}`)?.scrollIntoView({ block: 'start' });
+}
+
+async function submitPayment(form) {
+  const button = form.querySelector('[type=submit]');
+  try {
+    setBusy(button, true);
+    await apiRequest(`/api/orders/${encodeURIComponent(form.dataset.id)}/payment`, {
+      method: 'POST',
+      body: { transactionId: new FormData(form).get('transactionId') }
+    });
+    toast("Thanks! We're checking your payment and will notify you once it's confirmed.", 'success');
+    render();
+  } catch (error) {
+    reportApiError(error);
+    setBusy(button, false);
+  }
+}
+
+async function confirmReceipt(orderId, shopId) {
+  const confirmed = await confirmDialog({
+    title: 'Did you receive your order?',
+    message: 'Confirm only if you have your items and they are as described. ShopVerse will then release payment to the seller.',
+    confirmLabel: 'Yes, I received it'
+  });
+  if (!confirmed) return;
+  try {
+    await apiRequest(`/api/orders/${encodeURIComponent(orderId)}/confirm`, { method: 'POST', body: { shopId } });
+    toast('Thanks for confirming! Enjoy your order.', 'success');
+    render();
+  } catch (error) {
+    reportApiError(error);
+  }
+}
+
+function openDispute(orderId, shopId, shopName) {
+  const modal = openModal({
+    title: 'Report a problem',
+    subtitle: `With your order from ${shopName}. Payment stays on hold while ShopVerse reviews it.`,
+    body: `
+      <form class="form-grid" data-form="dispute" id="disputeForm" data-id="${h(orderId)}" data-shop="${h(shopId)}">
+        <label class="field"><span>What went wrong?</span>
+          <textarea name="reason" rows="4" maxlength="1000" required placeholder="e.g. The item never arrived, or it arrived damaged / different from the photos."></textarea>
+        </label>
+        <p class="muted" style="font-size:.85rem">ShopVerse will contact you and the seller, usually within 1–2 working days.</p>
+      </form>`,
+    foot: `<button type="button" class="button button-outline" data-modal-close>Cancel</button>
+           <button type="submit" form="disputeForm" class="button button-danger">Report problem</button>`
+  });
+  return modal;
+}
+
+async function submitDispute(form) {
+  const reason = String(new FormData(form).get('reason') || '').trim();
+  if (!reason) {
+    toast('Please describe the problem.', 'error');
+    return;
+  }
+  const button = $('.modal-foot .button-danger');
+  try {
+    setBusy(button, true);
+    await apiRequest(`/api/orders/${encodeURIComponent(form.dataset.id)}/dispute`, {
+      method: 'POST',
+      body: { shopId: form.dataset.shop, reason }
+    });
+    modalStack[modalStack.length - 1]?.close();
+    toast('Problem reported. Payment is on hold and ShopVerse will be in touch.', 'success');
+    render();
+  } catch (error) {
+    reportApiError(error);
+    setBusy(button, false);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1604,7 +1921,7 @@ async function viewOrders({ id, query }) {
 
 async function viewStudio({ id, query }) {
   if (!requireRole('shop_owner')) return;
-  const tab = ['products', 'orders', 'profile'].includes(query.get('tab')) ? query.get('tab') : 'products';
+  const tab = ['products', 'orders', 'profile', 'grow'].includes(query.get('tab')) ? query.get('tab') : 'products';
   setTitle('Seller studio');
   if (!state.studio) setView(loader);
 
@@ -1624,16 +1941,18 @@ async function viewStudio({ id, query }) {
       <div class="studio-head">
         <div class="studio-identity" style="--accent-c: ${safeColor(user.shopThemeColor)}">
           <div class="shop-avatar">${avatarMarkup(user.shopProfileImage, user.shopName)}</div>
-          <div><span class="eyebrow">Seller studio</span><h1>${h(user.shopName)}</h1></div>
+          <div><span class="eyebrow">Seller studio</span><h1>${h(user.shopName)} ${verifiedBadge(stats.verification === 'verified')}</h1></div>
         </div>
         <div class="button-row">
           <a href="/shops/${encodeURIComponent(user.id)}" class="button button-outline">${icon('store')} View storefront</a>
           <button type="button" class="button button-primary" data-action="new-product">${icon('plus')} Add product</button>
         </div>
       </div>
-      ${query.get('welcome') ? `<div class="notice notice-success" style="margin-bottom:20px">${icon('sparkle')}<span><strong>Your shop is live!</strong> Add your first product and personalise your storefront to start selling.</span></div>` : ''}
+      ${query.get('welcome') ? `<div class="notice notice-success" style="margin-bottom:20px">${icon('sparkle')}<span><strong>Your shop is live!</strong> Add your first products, then share your shop link on WhatsApp from the <a class="link" href="/studio?tab=grow">Share &amp; grow</a> tab.</span></div>` : ''}
+      ${stats.verification !== 'verified' && stats.verification !== 'pending' ? `
+        <div class="notice" style="margin-bottom:20px">${icon('shield')}<span><strong>Get the ✓ Verified badge.</strong> Verified shops win more buyers' trust. <a class="link" href="/studio?tab=profile#verification">Request verification</a></span></div>` : ''}
       <div class="kpi-grid">
-        <div class="card kpi"><span>${icon('wallet')} Revenue</span><strong>${formatMoney(stats.revenue)}</strong></div>
+        <div class="card kpi"><span>${icon('wallet')} Sales</span><strong>${formatMoney(stats.revenue)}</strong></div>
         <div class="card kpi"><span>${icon('receipt')} Open orders</span><strong>${h(stats.openOrderCount)}</strong></div>
         <div class="card kpi"><span>${icon('box')} Products</span><strong>${h(stats.shopProductCount)}</strong></div>
         <div class="card kpi"><span>${icon('star')} Rating</span><strong>${stats.reviewCount ? `${Number(stats.averageRating).toFixed(1)}<small class="muted" style="font-size:.85rem;font-weight:500"> / ${stats.reviewCount}</small>` : '–'}</strong></div>
@@ -1643,13 +1962,78 @@ async function viewStudio({ id, query }) {
         <a href="/studio?tab=products" class="${tab === 'products' ? 'active' : ''}">Products<span class="tab-count">${state.studio.products.length}</span></a>
         <a href="/studio?tab=orders" class="${tab === 'orders' ? 'active' : ''}">Orders${openOrders ? `<span class="tab-count">${openOrders}</span>` : ''}</a>
         <a href="/studio?tab=profile" class="${tab === 'profile' ? 'active' : ''}">Shop profile</a>
+        <a href="/studio?tab=grow" class="${tab === 'grow' ? 'active' : ''}">Share &amp; grow</a>
       </nav>
       <div id="studioPanel"></div>
     </div>`);
 
   if (tab === 'products') renderInventory();
   if (tab === 'orders') renderStudioOrders();
-  if (tab === 'profile') renderProfileTab();
+  if (tab === 'profile') {
+    renderProfileTab();
+    if (location.hash === '#verification') $('#verification')?.scrollIntoView({ behavior: 'smooth' });
+  }
+  if (tab === 'grow') renderGrowTab();
+}
+
+// The seller's own customers are ShopVerse's best marketing: give them ready-made sharing.
+function renderGrowTab() {
+  const panel = $('#studioPanel');
+  if (!panel) return;
+  const user = state.user;
+  const shopPath = `/shops/${encodeURIComponent(user.id)}`;
+  const shopUrl = absoluteUrl(shopPath);
+  const productCount = state.studio.products.length;
+  const statusText = `🛍️ ${user.shopName} is now on ShopVerse!\nBrowse everything we sell and order online. Pay safely with MoMo or Airtel Money; you only pay the seller once you receive your order.\n👉 ${shopUrl}`;
+  const topProducts = state.studio.products.filter((product) => product.inStock).slice(0, 6);
+
+  panel.innerHTML = `
+    <div class="grow-layout">
+      <section class="card card-pad">
+        <h2 style="font-size:1.1rem">Your shop link</h2>
+        <p class="muted" style="font-size:.875rem;margin:4px 0 14px">Put this link everywhere your customers already are: your WhatsApp status, Facebook page, Instagram bio and business cards.</p>
+        <div class="link-box">
+          <input type="text" readonly value="${h(shopUrl)}" aria-label="Your shop link" />
+          <button type="button" class="button button-outline button-sm" data-action="copy-link" data-path="${h(shopPath)}">${icon('link')} Copy</button>
+        </div>
+        <div class="button-row" style="margin-top: 14px">
+          <a class="button button-whatsapp" target="_blank" rel="noopener" href="${h(whatsappShareUrl(statusText))}">${icon('whatsapp')} Share on WhatsApp</a>
+          <a class="button button-outline" target="_blank" rel="noopener" href="https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shopUrl)}">Share on Facebook</a>
+        </div>
+      </section>
+
+      <section class="card card-pad">
+        <h2 style="font-size:1.1rem">Ready-made WhatsApp status</h2>
+        <p class="muted" style="font-size:.875rem;margin:4px 0 14px">Copy this and post it as your status, or send it to your customer groups.</p>
+        <textarea class="status-text" readonly rows="6" aria-label="Status message">${h(statusText)}</textarea>
+        <div class="button-row" style="margin-top: 12px">
+          <button type="button" class="button button-outline button-sm" data-action="copy-text" data-text="${h(statusText)}">${icon('link')} Copy message</button>
+        </div>
+      </section>
+
+      <section class="card card-pad grow-wide">
+        <h2 style="font-size:1.1rem">Share individual products</h2>
+        <p class="muted" style="font-size:.875rem;margin:4px 0 14px">Each link shows the product photo, name and price in WhatsApp.</p>
+        ${topProducts.length ? `<div class="share-products">${topProducts.map((product) => `
+          <div class="share-product">
+            <div class="thumb thumb-sm" style="--accent-c:${safeColor(user.shopThemeColor)}">${mediaMarkup(product.image, product.name)}</div>
+            <div class="si-text"><strong>${h(product.name)}</strong><span>${formatMoney(product.price)}</span></div>
+            <a class="icon-button" target="_blank" rel="noopener" aria-label="Share ${h(product.name)} on WhatsApp"
+               href="${h(whatsappShareUrl(`${product.name}: ${formatMoney(product.price)} at ${user.shopName}. Order safely on ShopVerse: ${absoluteUrl(`/products/${encodeURIComponent(product.id)}`)}`))}">${icon('whatsapp')}</a>
+          </div>`).join('')}</div>` : `<p class="muted">Add products in stock to share them here.</p>`}
+      </section>
+
+      <section class="card card-pad grow-wide">
+        <h2 style="font-size:1.1rem">Tips to get your first sales</h2>
+        <ul class="tips">
+          <li class="${productCount >= 5 ? 'done' : ''}">${icon(productCount >= 5 ? 'checkCircle' : 'box')}<div><strong>List at least 5 products</strong><span>${productCount >= 5 ? 'Done!' : `You have ${productCount}. Shops with more choice sell more.`}</span></div></li>
+          <li class="${user.shopProfileImage ? 'done' : ''}">${icon(user.shopProfileImage ? 'checkCircle' : 'image')}<div><strong>Add your logo and a banner</strong><span>Shops with photos look trustworthy.</span></div></li>
+          <li class="${state.studio.stats.verification === 'verified' ? 'done' : ''}">${icon(state.studio.stats.verification === 'verified' ? 'checkCircle' : 'shield')}<div><strong>Get verified</strong><span>The ✓ badge tells buyers you're a real, checked business.</span></div></li>
+          <li class="${user.shopPhone ? 'done' : ''}">${icon(user.shopPhone ? 'checkCircle' : 'whatsapp')}<div><strong>Add your WhatsApp number</strong><span>Buyers can ask questions before they order.</span></div></li>
+          <li>${icon('repeat')}<div><strong>Ask happy customers for a review</strong><span>Reviews are the #1 reason new buyers trust a shop.</span></div></li>
+        </ul>
+      </section>
+    </div>`;
 }
 
 function renderInventory() {
@@ -1834,10 +2218,16 @@ function renderStudioOrders() {
     all: () => true
   };
   const list = orders.filter(filters[orderFilter]);
+  const { stats } = state.studio;
 
   panel.innerHTML = `
+    <div class="payout-strip">
+      <div><span>${icon('lock')} Held for you</span><strong>${formatMoney(stats.payoutHeld)}</strong><small>Paid out after customers receive their orders</small></div>
+      <div><span>${icon('wallet')} Ready to pay out</span><strong>${formatMoney(stats.payoutReady)}</strong><small>ShopVerse is sending this to you</small></div>
+      <div><span>${icon('checkCircle')} Paid out</span><strong>${formatMoney(stats.payoutPaid)}</strong><small>Already sent to you</small></div>
+    </div>
     <div class="panel-head">
-      <div><h2>Orders</h2><p>Update the status as you fulfil each order. Customers are notified automatically.</p></div>
+      <div><h2>Orders</h2><p>Ship once payment is secured, then update the status. Customers are notified automatically.</p></div>
       <div class="chip-row">
         ${[['open', 'Open'], ['delivered', 'Delivered'], ['cancelled', 'Cancelled'], ['all', 'All']].map(([key, label]) => `
           <button type="button" class="chip ${orderFilter === key ? 'active' : ''}" data-action="order-filter" data-filter="${key}">${label} <small>${orders.filter(filters[key]).length}</small></button>`).join('')}
@@ -1846,6 +2236,7 @@ function renderStudioOrders() {
     <div class="order-list">
       ${list.length ? list.map((order) => {
         const final = ['delivered', 'cancelled'].includes(order.status);
+        const payout = PAYOUT_LABELS[order.payout.state] || PAYOUT_LABELS.held;
         return `
         <article class="card order-card">
           <div class="order-head">
@@ -1853,9 +2244,15 @@ function renderStudioOrders() {
               <div><span>Order</span><strong>#${h(shortId(order.id))}</strong></div>
               <div><span>Placed</span><strong>${h(timeAgo(order.createdAt))}</strong></div>
               <div><span>Customer</span><strong>${h(order.customerName)}</strong></div>
-              <div><span>Your total</span><strong>${formatMoney(order.total)}</strong></div>
+              <div><span>You receive</span><strong>${formatMoney(order.payout.net)}</strong></div>
             </div>
             ${statusPill(order.status)}
+          </div>
+          <div class="payout-banner tone-${payout.tone || 'neutral'}">
+            ${icon(order.payout.state === 'awaiting_payment' ? 'alert' : order.payout.state === 'on_hold' ? 'flag' : 'lock')}
+            <div><strong>${h(payout.label)}</strong><span>${h(payout.hint)}${
+              order.payout.state === 'held' && order.payout.autoReleaseAt ? ` Releases automatically on ${h(formatDate(order.payout.autoReleaseAt))} unless the customer reports a problem.` : ''}${
+              order.dispute && !order.dispute.resolvedAt ? ` Customer says: “${h(order.dispute.reason)}”` : ''}</span></div>
           </div>
           <div class="order-body">
             <div class="order-lines">
@@ -1865,11 +2262,14 @@ function renderStudioOrders() {
                   <div class="ol-text"><strong>${h(item.productName)}</strong><span>${formatMoney(item.price)} × ${h(item.quantity)}</span></div>
                   <strong>${formatMoney(item.price * item.quantity)}</strong>
                 </div>`).join('')}
+              ${order.deliveryFee ? `<div class="order-line order-line-fee"><div class="ol-text">Delivery fee</div><strong>${formatMoney(order.deliveryFee)}</strong></div>` : ''}
+              ${order.payout.commission ? `<div class="order-line order-line-fee"><div class="ol-text">ShopVerse commission</div><strong>−${formatMoney(order.payout.commission)}</strong></div>` : ''}
             </div>
             <div class="order-aside">
-              <div><h4>Deliver to</h4><p>${h(order.shippingAddress)}</p></div>
-              ${order.contactPhone ? `<div><h4>Phone</h4><p><a class="link" href="tel:${h(order.contactPhone.replace(/[^\d+]/g, ''))}">${h(order.contactPhone)}</a></p></div>` : ''}
-              <div><h4>Payment</h4><p>${h(PAYMENT_LABELS[order.paymentMethod] || order.paymentMethod)} · ${h(order.paymentStatus)}</p></div>
+              <div><h4>${order.method === 'pickup' ? 'Customer collects' : 'Deliver to'}</h4><p>${order.method === 'pickup' ? 'Pickup from your shop' : h(order.shippingAddress || '')}</p></div>
+              ${order.contactPhone ? `<div><h4>Customer phone</h4><p><a class="link" href="tel:${h(order.contactPhone.replace(/[^\d+]/g, ''))}">${h(order.contactPhone)}</a>${
+                order.whatsapp ? ` · <a class="link" target="_blank" rel="noopener" href="${h(whatsappChatUrl(order.whatsapp, `Hi ${order.customerName}, this is ${state.user.shopName} about your ShopVerse order #${shortId(order.id)}.`))}">WhatsApp</a>` : ''}</p></div>` : ''}
+              <div><h4>Payment</h4><p>${h(PAYMENT_LABELS[order.paymentMethod] || order.paymentMethod)}</p></div>
               ${order.note ? `<div><h4>Customer note</h4><p>${h(order.note)}</p></div>` : ''}
             </div>
           </div>
@@ -1916,6 +2316,7 @@ function renderProfileTab() {
   const panel = $('#studioPanel');
   if (!panel) return;
   const user = state.user;
+  const delivery = { enabled: true, fee: 0, freeOver: null, areas: '', pickup: false, ...(user.delivery || {}) };
   panel.innerHTML = `
     <div class="profile-layout">
       <form class="card card-pad form-grid" data-form="shop-profile" id="shopProfileForm" novalidate>
@@ -1933,15 +2334,71 @@ function renderProfileTab() {
               <div class="color-swatches">${THEME_PRESETS.map((color) => `<button type="button" style="background:${color}" data-action="set-color" data-color="${color}" aria-label="Use ${color}"></button>`).join('')}</div>
             </div>
           </div>
+          <label class="field full"><span>WhatsApp number <span class="hint">· buyers can message you before ordering</span></span>
+            <input type="tel" name="shopPhone" maxlength="30" placeholder="097 123 4567" value="${h(user.shopPhone || '')}" /></label>
         </div>
+
+        <fieldset class="settings-group">
+          <legend>Delivery &amp; pickup</legend>
+          <div class="form-grid two">
+            <label class="toggle full"><input type="checkbox" name="deliveryEnabled" ${delivery.enabled ? 'checked' : ''} /> I deliver to customers</label>
+            <label class="field"><span>Delivery fee (ZMW) <span class="hint">· 0 for free</span></span><input type="number" name="deliveryFee" min="0" step="0.01" value="${h(delivery.fee)}" /></label>
+            <label class="field"><span>Free delivery over (ZMW) <span class="hint">· optional</span></span><input type="number" name="deliveryFreeOver" min="0" step="0.01" value="${h(delivery.freeOver ?? '')}" placeholder="e.g. 500" /></label>
+            <label class="field full"><span>Where you deliver</span><input type="text" name="deliveryAreas" maxlength="200" value="${h(delivery.areas)}" placeholder="e.g. Lusaka same day; other towns by bus parcel" /></label>
+            <label class="toggle full"><input type="checkbox" name="pickup" ${delivery.pickup ? 'checked' : ''} /> Customers can collect from my shop for free</label>
+          </div>
+        </fieldset>
         <div class="form-actions"><button type="submit" class="button button-primary">Save profile</button></div>
       </form>
       <div class="preview-sticky">
         <div class="preview-label">Live preview</div>
         <div id="profilePreview"></div>
       </div>
-    </div>`;
+    </div>
+    ${verificationCard(user)}`;
   updateProfilePreview();
+}
+
+function verificationCard(user) {
+  const verification = user.verification || { status: 'none' };
+  const states = {
+    verified: `<div class="notice notice-success">${icon('checkCircle')}<span><strong>Your shop is verified.</strong> The ✓ Verified badge shows on your storefront, products and in search.</span></div>`,
+    pending: `<div class="notice">${icon('info')}<span><strong>Verification requested${verification.submittedAt ? ` on ${h(formatDate(verification.submittedAt))}` : ''}.</strong> ShopVerse will review your details, usually within 2 working days, and may contact you on WhatsApp.</span></div>`,
+    rejected: `<div class="notice notice-warning">${icon('alert')}<span><strong>Verification was not approved.</strong>${verification.reviewNote ? ` ${h(verification.reviewNote)}` : ''} Update your details below and apply again.</span></div>`
+  };
+  const canApply = verification.status === 'none' || verification.status === 'rejected';
+  return `
+    <section class="card card-pad verification-card" id="verification">
+      <div class="panel-head" style="margin-bottom: 10px">
+        <div><h2>${icon('shield')} Seller verification</h2><p>Verified shops show a ✓ badge. Buyers trust them more, so they get more orders.</p></div>
+        ${verifiedBadge(verification.status === 'verified')}
+      </div>
+      ${states[verification.status] || ''}
+      ${canApply ? `
+        <form class="form-grid two" data-form="verification" style="margin-top: 14px" novalidate>
+          <label class="field"><span>Registered business or trading name</span><input type="text" name="businessName" maxlength="120" required value="${h(verification.businessName || user.shopName || '')}" /></label>
+          <label class="field"><span>NRC or PACRA number</span><input type="text" name="idNumber" maxlength="40" required value="${h(verification.idNumber || '')}" placeholder="e.g. 123456/10/1" /></label>
+          <label class="field"><span>WhatsApp number</span><input type="tel" name="phone" maxlength="30" required value="${h(user.shopPhone || '')}" placeholder="097 123 4567" /></label>
+          <label class="field"><span>Anything else? <span class="hint">· optional</span></span><input type="text" name="note" maxlength="500" placeholder="e.g. Market stall number, years trading" /></label>
+          <div class="form-actions full"><button type="submit" class="button button-primary">Request verification</button></div>
+        </form>` : ''}
+    </section>`;
+}
+
+async function submitVerification(form) {
+  const data = Object.fromEntries(new FormData(form).entries());
+  const button = form.querySelector('[type=submit]');
+  try {
+    setBusy(button, true);
+    const { user } = await apiRequest('/api/me/verification', { method: 'POST', body: data });
+    state.user = user;
+    saveSession(user, null);
+    toast('Verification requested. ShopVerse will review it shortly.', 'success');
+    render();
+  } catch (error) {
+    reportApiError(error);
+    setBusy(button, false);
+  }
 }
 
 const previewImages = { profile: null, banner: null };
@@ -1983,7 +2440,15 @@ async function submitShopProfile(form) {
     shopName: data.get('shopName'),
     shopLocation: data.get('shopLocation'),
     shopDescription: data.get('shopDescription'),
-    shopThemeColor: data.get('shopThemeColor')
+    shopThemeColor: data.get('shopThemeColor'),
+    shopPhone: data.get('shopPhone'),
+    delivery: {
+      enabled: data.get('deliveryEnabled') === 'on',
+      fee: data.get('deliveryFee') || 0,
+      freeOver: data.get('deliveryFreeOver') || null,
+      areas: data.get('deliveryAreas'),
+      pickup: data.get('pickup') === 'on'
+    }
   };
   try {
     setBusy(button, true);
@@ -2007,6 +2472,265 @@ async function submitShopProfile(form) {
 }
 
 // ---------------------------------------------------------------------------
+// Views: admin (verification, protected payments, payouts, disputes, metrics)
+// ---------------------------------------------------------------------------
+
+const percentText = (value) => (value === null || value === undefined ? '–' : `${value}%`);
+
+async function viewAdmin({ id, query }) {
+  if (!requireRole()) return;
+  if (!state.user.isAdmin) {
+    viewNotFound();
+    return;
+  }
+  const tab = ['overview', 'sellers', 'payments'].includes(query.get('tab')) ? query.get('tab') : 'overview';
+  setTitle('Admin');
+  setView(loader);
+
+  const [overview, sellers, payments] = await Promise.all([
+    apiRequest('/api/admin/overview'),
+    apiRequest('/api/admin/sellers'),
+    apiRequest('/api/admin/payments')
+  ]);
+  if (stale(id)) return;
+  state.admin = { metrics: overview.metrics, sellers: sellers.sellers, payments };
+  const m = overview.metrics;
+  const paymentTasks = payments.toConfirm.length + payments.payouts.length + payments.refunds.length + payments.disputes.length;
+
+  setView(`
+    <div class="container">
+      <div class="studio-head">
+        <div><span class="eyebrow">ShopVerse admin</span><h1 style="font-size:1.6rem">Marketplace control room</h1></div>
+        <button type="button" class="button button-outline" data-action="refresh">${icon('repeat')} Refresh</button>
+      </div>
+      <nav class="tabs" aria-label="Admin sections" style="margin-top:0">
+        <a href="/admin?tab=overview" class="${tab === 'overview' ? 'active' : ''}">Overview</a>
+        <a href="/admin?tab=sellers" class="${tab === 'sellers' ? 'active' : ''}">Sellers${m.pendingVerifications ? `<span class="tab-count">${m.pendingVerifications}</span>` : ''}</a>
+        <a href="/admin?tab=payments" class="${tab === 'payments' ? 'active' : ''}">Payments${paymentTasks ? `<span class="tab-count">${paymentTasks}</span>` : ''}</a>
+      </nav>
+      <div id="adminPanel"></div>
+    </div>`);
+
+  if (tab === 'overview') renderAdminOverview();
+  if (tab === 'sellers') renderAdminSellers();
+  if (tab === 'payments') renderAdminPayments();
+}
+
+function renderAdminOverview() {
+  const m = state.admin.metrics;
+  const trend = m.ordersLastWeek ? Math.round(((m.ordersThisWeek - m.ordersLastWeek) / m.ordersLastWeek) * 100) : null;
+  const attention = [
+    [m.paymentsToConfirm, 'payments to confirm', '/admin?tab=payments', 'wallet'],
+    [m.payoutsReadyCount, `payouts ready (${formatMoney(m.payoutsReadyAmount)})`, '/admin?tab=payments', 'checkCircle'],
+    [m.refundsDue, 'refunds due', '/admin?tab=payments', 'repeat'],
+    [m.disputesOpen, 'open disputes', '/admin?tab=payments', 'flag'],
+    [m.pendingVerifications, 'sellers waiting for verification', '/admin?tab=sellers', 'shield']
+  ].filter(([count]) => count > 0);
+
+  $('#adminPanel').innerHTML = `
+    <div class="panel-head"><div><h2>Growth</h2><p>The numbers that show whether ShopVerse is working.</p></div></div>
+    <div class="kpi-grid admin-kpis">
+      <div class="card kpi"><span>${icon('store')} Active sellers</span><strong>${h(m.activeSellers)}<small class="muted kpi-sub"> / ${h(m.sellers)}</small></strong><small class="kpi-note">5+ products listed</small></div>
+      <div class="card kpi"><span>${icon('shield')} Verified sellers</span><strong>${h(m.verifiedSellers)}</strong><small class="kpi-note">${h(m.pendingVerifications)} waiting</small></div>
+      <div class="card kpi"><span>${icon('receipt')} Orders this week</span><strong>${h(m.ordersThisWeek)}</strong><small class="kpi-note">${trend === null ? `${h(m.ordersLastWeek)} last week` : `${trend >= 0 ? '+' : ''}${trend}% vs last week`}</small></div>
+      <div class="card kpi"><span>${icon('truck')} Completion rate</span><strong>${percentText(m.completionRate)}</strong><small class="kpi-note">Delivered vs cancelled</small></div>
+      <div class="card kpi"><span>${icon('repeat')} Repeat buyers</span><strong>${percentText(m.repeatBuyerRate)}</strong><small class="kpi-note">Bought 2+ times</small></div>
+    </div>
+    <div class="kpi-grid admin-kpis" style="margin-top:14px">
+      <div class="card kpi"><span>${icon('chart')} Sales, last 30 days</span><strong>${formatMoney(m.sales30Days)}</strong><small class="kpi-note">${formatMoney(m.salesAllTime)} all time</small></div>
+      <div class="card kpi"><span>${icon('lock')} Money held</span><strong>${formatMoney(m.heldAmount)}</strong><small class="kpi-note">Protected payments not yet paid out</small></div>
+      <div class="card kpi"><span>${icon('wallet')} Commission earned</span><strong>${formatMoney(m.commissionEarned)}</strong><small class="kpi-note">Rate: ${h(m.commissionPercent)}%</small></div>
+      <div class="card kpi"><span>${icon('users')} Customers</span><strong>${h(m.customers)}</strong><small class="kpi-note">Registered accounts</small></div>
+      <div class="card kpi"><span>${icon('box')} Products</span><strong>${h(m.products)}</strong><small class="kpi-note">Listed across all shops</small></div>
+    </div>
+    <section class="card card-pad" style="margin-top:20px">
+      <h2 style="font-size:1.05rem;margin-bottom:12px">Needs your attention</h2>
+      ${attention.length ? `<ul class="attention-list">${attention.map(([count, label, href, iconName]) => `
+        <li><a href="${href}">${icon(iconName)}<strong>${h(count)}</strong> ${h(label)} <span class="link">Open →</span></a></li>`).join('')}</ul>`
+        : `<p class="muted">${icon('checkCircle')} All caught up.</p>`}
+    </section>`;
+}
+
+function renderAdminSellers() {
+  const { sellers } = state.admin;
+  const statusTone = { verified: 'badge-success', pending: 'badge-warning', rejected: 'badge-danger', none: '' };
+  $('#adminPanel').innerHTML = `
+    <div class="panel-head"><div><h2>Sellers</h2><p>Check each request before approving: call or WhatsApp the seller, and confirm the NRC/PACRA details.</p></div></div>
+    <div class="order-list">
+      ${sellers.length ? sellers.map((seller) => {
+        const v = seller.verification;
+        return `
+          <article class="card seller-row">
+            <div class="seller-main">
+              <div class="shop-avatar" style="--accent-c:${safeColor(seller.shopThemeColor)}">${avatarMarkup(seller.shopProfileImage, seller.shopName)}</div>
+              <div>
+                <strong><a class="link" href="/shops/${encodeURIComponent(seller.id)}">${h(seller.shopName)}</a></strong> ${verifiedBadge(v.status === 'verified', { compact: true })}
+                <div class="meta-row">
+                  <span>${icon('user')} ${h(seller.name)}</span>
+                  <span>${icon('pin')} ${h(seller.shopLocation || '–')}</span>
+                  ${seller.shopPhone ? `<span>${icon('whatsapp')} <a class="link" target="_blank" rel="noopener" href="${h(whatsappChatUrl(seller.shopPhone.replace(/\D/g, ''), `Hi ${seller.name}, this is ShopVerse about your shop ${seller.shopName}.`))}">${h(seller.shopPhone)}</a></span>` : ''}
+                  <span>${icon('box')} ${h(seller.productCount)} products</span>
+                  <span>${icon('receipt')} ${h(seller.orderCount)} orders · ${h(seller.deliveredCount)} delivered${seller.disputeCount ? ` · ${h(seller.disputeCount)} disputes` : ''}</span>
+                </div>
+              </div>
+              <span class="badge ${statusTone[v.status] || ''}">${h(v.status === 'none' ? 'not verified' : v.status)}</span>
+            </div>
+            ${v.status === 'pending' ? `
+              <div class="seller-request">
+                <div><span>Business name</span><strong>${h(v.businessName || '–')}</strong></div>
+                <div><span>NRC / PACRA</span><strong>${h(v.idNumber || '–')}</strong></div>
+                <div><span>Requested</span><strong>${v.submittedAt ? h(formatDate(v.submittedAt)) : '–'}</strong></div>
+                ${v.note ? `<div class="full"><span>Note</span><strong>${h(v.note)}</strong></div>` : ''}
+              </div>` : ''}
+            <div class="seller-actions">
+              ${v.status !== 'verified' ? `<button type="button" class="button button-primary button-xs" data-action="admin-verify" data-id="${h(seller.id)}" data-status="verified">${icon('check')} Verify</button>` : ''}
+              ${v.status === 'pending' ? `<button type="button" class="button button-danger-ghost button-xs" data-action="admin-verify" data-id="${h(seller.id)}" data-status="rejected">Reject</button>` : ''}
+              ${v.status === 'verified' ? `<button type="button" class="button button-ghost button-xs" data-action="admin-verify" data-id="${h(seller.id)}" data-status="none">Remove badge</button>` : ''}
+            </div>
+          </article>`;
+      }).join('') : emptyState({ iconName: 'store', title: 'No sellers yet', text: 'Sellers appear here as soon as they register.' })}
+    </div>`;
+}
+
+const adminTaskCard = (entry, actions, extra = '') => `
+  <article class="card admin-task">
+    <div class="admin-task-main">
+      <div>
+        <strong>${h(entry.reference)}</strong> · ${h(entry.customerName)}${entry.shopName ? ` → ${h(entry.shopName)}` : ''}
+        <div class="meta-row">
+          <span>${icon('wallet')} ${h(PAYMENT_LABELS[entry.method] || entry.method)}</span>
+          ${entry.transactionId ? `<span>Txn: <code>${h(entry.transactionId)}</code></span>` : ''}
+          ${entry.customerPhone && !entry.shopName ? `<span>${icon('phone')} ${h(entry.customerPhone)}</span>` : ''}
+          ${entry.shopPhone ? `<span>${icon('whatsapp')} ${h(entry.shopPhone)}</span>` : ''}
+          <span>${h(timeAgo(entry.submittedAt || entry.createdAt))}</span>
+        </div>
+        ${extra}
+      </div>
+      <div class="admin-task-amount">
+        <strong>${formatMoney(entry.net ?? entry.amount)}</strong>
+        ${entry.commission ? `<small>after ${formatMoney(entry.commission)} commission</small>` : ''}
+      </div>
+    </div>
+    <div class="seller-actions">${actions}</div>
+  </article>`;
+
+function renderAdminPayments() {
+  const p = state.admin.payments;
+  const section = (title, description, items, render, empty) => `
+    <section class="admin-section">
+      <div class="panel-head"><div><h2>${title} <span class="tab-count">${items.length}</span></h2><p>${description}</p></div></div>
+      ${items.length ? `<div class="order-list">${items.map(render).join('')}</div>` : `<p class="muted admin-empty">${empty}</p>`}
+    </section>`;
+
+  $('#adminPanel').innerHTML = `
+    ${section('Payments to confirm', 'Check that the money arrived in the ShopVerse account with this reference, then confirm.', p.toConfirm, (entry) => adminTaskCard(entry, `
+      <button type="button" class="button button-primary button-xs" data-action="admin-payment" data-id="${h(entry.orderId)}" data-do="confirm">${icon('check')} Money received</button>
+      <button type="button" class="button button-danger-ghost button-xs" data-action="admin-payment" data-id="${h(entry.orderId)}" data-do="reject">Not found</button>`), 'No payments waiting.')}
+    ${section('Disputes', 'The customer reported a problem. Talk to both sides, then release the money or refund.', p.disputes, (entry) => adminTaskCard(entry, `
+      <button type="button" class="button button-primary button-xs" data-action="admin-resolve" data-id="${h(entry.orderId)}" data-shop="${h(entry.shopId)}" data-do="release">Pay the seller</button>
+      <button type="button" class="button button-danger-ghost button-xs" data-action="admin-resolve" data-id="${h(entry.orderId)}" data-shop="${h(entry.shopId)}" data-do="refund">Refund the customer</button>`,
+      entry.dispute ? `<p class="dispute-reason">${icon('flag')} “${h(entry.dispute.reason)}”</p>` : ''), 'No open disputes.')}
+    ${section('Payouts ready', 'The customer has their order. Send the seller their money, then mark it paid.', p.payouts, (entry) => adminTaskCard(entry, `
+      <button type="button" class="button button-primary button-xs" data-action="admin-payout" data-id="${h(entry.orderId)}" data-shop="${h(entry.shopId)}">${icon('wallet')} Mark as paid</button>`), 'No payouts due.')}
+    ${section('Refunds due', 'Cancelled after payment. Send the money back to the customer, then mark it refunded.', p.refunds, (entry) => adminTaskCard(entry, `
+      <button type="button" class="button button-primary button-xs" data-action="admin-refund" data-id="${h(entry.orderId)}" data-shop="${h(entry.shopId)}">${icon('repeat')} Mark as refunded</button>`), 'No refunds due.')}
+    ${section('Held, waiting for delivery', 'Paid and protected. Released when the customer confirms, or automatically 3 days after delivery.', p.held, (entry) => adminTaskCard(entry, ''), 'Nothing held right now.')}
+    ${section('Awaiting payment', 'Orders placed but not paid yet.', p.awaiting, (entry) => adminTaskCard(entry, ''), 'No unpaid orders.')}`;
+}
+
+async function promptText({ title, message, label, placeholder = '', confirmLabel = 'Save', required = false, danger = false }) {
+  return new Promise((resolve) => {
+    let answered = false;
+    const modal = openModal({
+      title,
+      size: 'narrow',
+      body: `${message ? `<p class="muted" style="margin-bottom:12px">${h(message)}</p>` : ''}
+        <label class="field"><span>${h(label)}</span><input type="text" id="promptInput" maxlength="300" placeholder="${h(placeholder)}" /></label>`,
+      foot: `<button type="button" class="button button-outline" data-modal-close>Cancel</button>
+             <button type="button" class="button ${danger ? 'button-danger' : 'button-primary'}" data-confirm>${h(confirmLabel)}</button>`,
+      onClose: () => {
+        if (!answered) resolve(null);
+      }
+    });
+    const input = modal.element.querySelector('#promptInput');
+    const submit = () => {
+      if (required && !input.value.trim()) {
+        input.focus();
+        return;
+      }
+      answered = true;
+      modal.close();
+      resolve(input.value.trim());
+    };
+    modal.element.querySelector('[data-confirm]').addEventListener('click', submit);
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') submit();
+    });
+  });
+}
+
+async function adminAction(element) {
+  const { action, id, shop } = element.dataset;
+  const what = element.dataset.do;
+  let path;
+  let body = {};
+
+  if (action === 'admin-verify') {
+    const status = element.dataset.status;
+    if (status === 'rejected' || status === 'none') {
+      const note = await promptText({ title: status === 'rejected' ? 'Reject verification' : 'Remove verified badge', label: 'Reason (sent to the seller)', placeholder: 'e.g. NRC number did not match', confirmLabel: status === 'rejected' ? 'Reject' : 'Remove badge', danger: true });
+      if (note === null) return;
+      body = { status, note };
+    } else {
+      const ok = await confirmDialog({ title: 'Verify this seller?', message: 'Only verify after checking their NRC or PACRA details and speaking to them.', confirmLabel: 'Verify seller' });
+      if (!ok) return;
+      body = { status };
+    }
+    path = `/api/admin/sellers/${encodeURIComponent(id)}/verification`;
+  } else if (action === 'admin-payment') {
+    if (what === 'reject') {
+      const note = await promptText({ title: 'Payment not found', label: 'Message to the customer (optional)', placeholder: 'e.g. No payment received with this reference', confirmLabel: 'Reject payment', danger: true });
+      if (note === null) return;
+      body = { action: 'reject', note };
+    } else {
+      const ok = await confirmDialog({ title: 'Confirm money received?', message: 'Only confirm after checking the ShopVerse account statement for this amount and reference.', confirmLabel: 'Money received' });
+      if (!ok) return;
+      body = { action: 'confirm' };
+    }
+    path = `/api/admin/orders/${encodeURIComponent(id)}/payment`;
+  } else if (action === 'admin-payout') {
+    const reference = await promptText({ title: 'Mark payout as paid', message: 'Send the money to the seller first (for example by MoMo), then record it here.', label: 'Transfer reference (optional)', placeholder: 'e.g. MP240101.5678.B12345', confirmLabel: 'Mark as paid' });
+    if (reference === null) return;
+    body = { reference };
+    path = `/api/admin/orders/${encodeURIComponent(id)}/shops/${encodeURIComponent(shop)}/payout`;
+  } else if (action === 'admin-refund') {
+    const ok = await confirmDialog({ title: 'Mark as refunded?', message: 'Only do this after you have sent the money back to the customer.', confirmLabel: 'Mark as refunded' });
+    if (!ok) return;
+    path = `/api/admin/orders/${encodeURIComponent(id)}/shops/${encodeURIComponent(shop)}/refund`;
+  } else if (action === 'admin-resolve') {
+    const note = await promptText({
+      title: what === 'release' ? 'Pay the seller' : 'Refund the customer',
+      label: 'Note to both sides (optional)',
+      confirmLabel: what === 'release' ? 'Release payment' : 'Refund customer',
+      danger: what === 'refund'
+    });
+    if (note === null) return;
+    body = { resolution: what, note };
+    path = `/api/admin/orders/${encodeURIComponent(id)}/shops/${encodeURIComponent(shop)}/resolve`;
+  }
+
+  try {
+    setBusy(element, true);
+    await apiRequest(path, { method: 'POST', body });
+    toast('Done.', 'success');
+    render();
+  } catch (error) {
+    reportApiError(error);
+    setBusy(element, false);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Views: account
 // ---------------------------------------------------------------------------
 
@@ -2021,7 +2745,7 @@ async function viewAccount({ id }) {
   setView(`
     <div class="container">
       <div class="page-head"><h1>Account settings</h1><p>Manage your personal details and password.</p></div>
-      ${isOwner ? '' : `
+      ${user.role !== 'customer' ? '' : `
         <div class="kpi-grid section-tight" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); padding-bottom: 0">
           <div class="card kpi"><span>${icon('receipt')} Orders</span><strong>${h(stats.userOrderCount)}</strong></div>
           <div class="card kpi"><span>${icon('truck')} In progress</span><strong>${h(stats.activeOrderCount)}</strong></div>
@@ -2332,6 +3056,46 @@ async function handleAction(action, element, event) {
     case 'install-app':
       installApp();
       break;
+    case 'share': {
+      const url = absoluteUrl(element.dataset.path);
+      if (navigator.share) {
+        try {
+          await navigator.share({ title: element.dataset.title, text: element.dataset.text, url });
+        } catch (error) {
+          // The person closed the share sheet.
+        }
+      } else {
+        window.open(whatsappShareUrl(`${element.dataset.text} ${url}`), '_blank', 'noopener');
+      }
+      break;
+    }
+    case 'copy-link':
+    case 'copy-text': {
+      const value = action === 'copy-link' ? absoluteUrl(element.dataset.path) : element.dataset.text;
+      try {
+        await navigator.clipboard.writeText(value);
+        toast(action === 'copy-link' ? 'Link copied.' : 'Message copied.', 'success');
+      } catch (error) {
+        toast('Could not copy automatically. Select the text and copy it.', 'error');
+      }
+      break;
+    }
+    case 'confirm-receipt':
+      confirmReceipt(element.dataset.id, element.dataset.shop);
+      break;
+    case 'open-dispute':
+      openDispute(element.dataset.id, element.dataset.shop, element.dataset.shopName);
+      break;
+    case 'admin-verify':
+    case 'admin-payment':
+    case 'admin-payout':
+    case 'admin-refund':
+    case 'admin-resolve':
+      adminAction(element);
+      break;
+    case 'refresh':
+      render();
+      break;
     case 'set-color': {
       const input = $('#shopProfileForm [name=shopThemeColor]');
       input.value = element.dataset.color;
@@ -2361,7 +3125,10 @@ function handleSubmit(event) {
     'shop-profile': () => submitShopProfile(form),
     'account-profile': () => submitAccountProfile(form),
     'account-password': () => submitPassword(form),
-    review: () => submitReview(form)
+    review: () => submitReview(form),
+    'submit-payment': () => submitPayment(form),
+    dispute: () => submitDispute(form),
+    verification: () => submitVerification(form)
   };
   const handler = handlers[form.dataset.form];
   if (handler) {
@@ -2422,6 +3189,9 @@ function handleChange(event) {
     case 'order-status':
       updateOrderStatus(target);
       break;
+    case 'checkout-summary':
+      updateCheckoutSummary();
+      break;
     case 'profile-preview':
       updateProfilePreview(target);
       break;
@@ -2455,7 +3225,9 @@ function wireEvents() {
       if (internal && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && event.button === 0) {
         event.preventDefault();
         if (link.getAttribute('aria-disabled') === 'true') return;
-        if (link.pathname + link.search !== location.pathname + location.search) navigate(link.pathname + link.search);
+        if (link.pathname + link.search + link.hash !== location.pathname + location.search + location.hash) {
+          navigate(link.pathname + link.search + link.hash);
+        }
         else render();
         return;
       }
