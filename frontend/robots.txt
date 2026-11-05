@@ -1,7 +1,0 @@
-User-agent: *
-Allow: /
-Disallow: /api/
-Disallow: /studio
-Disallow: /account
-Disallow: /orders
-Disallow: /checkout

@@ -271,6 +271,22 @@ test('admin overview reports the growth metrics', async () => {
   assert.equal(metrics.completionRate, 100);
 });
 
+test('search engines get a robots.txt and a sitemap of every shop and product', async () => {
+  const robots = await fetch(`${baseUrl}/robots.txt`);
+  assert.match(robots.headers.get('content-type'), /text\/plain/);
+  const robotsText = await robots.text();
+  assert.match(robotsText, /Sitemap: http:\/\/127\.0\.0\.1:\d+\/sitemap\.xml/);
+  assert.match(robotsText, /Disallow: \/admin/);
+
+  const sitemap = await fetch(`${baseUrl}/sitemap.xml`);
+  assert.match(sitemap.headers.get('content-type'), /application\/xml/);
+  const xml = await sitemap.text();
+  assert.match(xml, /<loc>http:\/\/127\.0\.0\.1:\d+\/products\/prod-5<\/loc>/);
+  assert.match(xml, /<loc>http:\/\/127\.0\.0\.1:\d+\/shops\/shop-owner-demo-2<\/loc>/);
+  assert.equal((xml.match(/<url>/g) || []).length, 4 + 3 + 10, 'fixed pages + 3 shops + 10 products');
+  assert.doesNotMatch(xml, /\/admin|\/studio/);
+});
+
 test('shared product and shop links get their own preview tags', async () => {
   const productPage = await (await fetch(`${baseUrl}/products/prod-5`)).text();
   assert.match(productPage, /<title>Smartphone 128GB · ZMW 3299\.00 \| ShopVerse<\/title>/);

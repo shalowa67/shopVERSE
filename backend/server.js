@@ -719,6 +719,63 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+// Search engines: robots.txt points crawlers at the sitemap, which lists every shop and
+// product so Google finds new listings without waiting to stumble on them.
+const siteBase = (req) => `${req.protocol}://${req.get('host')}`;
+const xmlEscape = (value) => String(value).replace(/[<>&'"]/g, (character) => ({
+  '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;'
+})[character]);
+
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain').send([
+    'User-agent: *',
+    'Allow: /',
+    'Disallow: /api/',
+    'Disallow: /studio',
+    'Disallow: /admin',
+    'Disallow: /account',
+    'Disallow: /orders',
+    'Disallow: /checkout',
+    '',
+    `Sitemap: ${siteBase(req)}/sitemap.xml`,
+    ''
+  ].join('\n'));
+});
+
+app.get('/sitemap.xml', (req, res) => {
+  const base = siteBase(req);
+  const day = (iso) => (iso ? String(iso).slice(0, 10) : null);
+  const entries = [
+    { loc: '/', priority: '1.0', changefreq: 'daily' },
+    { loc: '/products', priority: '0.9', changefreq: 'daily' },
+    { loc: '/shops', priority: '0.8', changefreq: 'daily' },
+    { loc: '/install', priority: '0.4', changefreq: 'monthly' }
+  ];
+  users.filter((user) => user.role === 'shop_owner').forEach((shop) => {
+    entries.push({ loc: `/shops/${encodeURIComponent(shop.id)}`, priority: '0.7', changefreq: 'weekly', lastmod: day(shop.createdAt) });
+  });
+  products.filter((product) => getShopById(product.shopId)).forEach((product) => {
+    entries.push({
+      loc: `/products/${encodeURIComponent(product.id)}`,
+      priority: '0.6',
+      changefreq: 'weekly',
+      lastmod: day(product.updatedAt || product.createdAt)
+    });
+  });
+
+  const body = entries.map((entry) => [
+    '  <url>',
+    `    <loc>${xmlEscape(base + entry.loc)}</loc>`,
+    entry.lastmod ? `    <lastmod>${entry.lastmod}</lastmod>` : null,
+    `    <changefreq>${entry.changefreq}</changefreq>`,
+    `    <priority>${entry.priority}</priority>`,
+    '  </url>'
+  ].filter(Boolean).join('\n')).join('\n');
+
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${body}\n</urlset>\n`);
+});
+
 // Digital Asset Links: proves the Android app (android/) belongs to this site so it opens
 // full-screen without a browser address bar. Contains only the public key fingerprint.
 app.get('/.well-known/assetlinks.json', (req, res) => {
@@ -1870,9 +1927,18 @@ const pagePreview = (req) => {
   return { image: fallbackImage, url: `${base}${req.path === '/' ? '/' : req.path}` };
 };
 
+// Google Search Console ownership check: set GOOGLE_SITE_VERIFICATION to the code from the
+// "HTML tag" method (only the content value, e.g. "abc123..."), then redeploy.
+const GOOGLE_SITE_VERIFICATION = String(process.env.GOOGLE_SITE_VERIFICATION || '')
+  .trim()
+  .replace(/^.*content="([^"]+)".*$/s, '$1');
+
 const renderShell = (req) => {
   const preview = pagePreview(req);
   let html = readShell();
+  if (GOOGLE_SITE_VERIFICATION) {
+    html = html.replace('</head>', `    <meta name="google-site-verification" content="${escapeAttr(GOOGLE_SITE_VERIFICATION)}" />\n  </head>`);
+  }
   const setMeta = (attr, key, value) => {
     if (!value) return;
     const pattern = new RegExp(`(<meta ${attr}="${key}" content=")[^"]*(")`);
