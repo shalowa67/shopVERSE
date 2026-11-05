@@ -459,7 +459,7 @@ test('shop owners can set a visible location for customers', async () => {
     body: JSON.stringify({
       name: 'Maya Adebayo',
       email: 'maya@shopverse.com',
-      password: '123456',
+      password: 'maya-secret-1',
       role: 'shop_owner',
       shopName: 'Maya Market',
       shopDescription: 'Fresh local goods and everyday essentials.',
@@ -737,7 +737,11 @@ test('shop owners can upload product images and customize their shop profile', a
 
   assert.equal(createProduct.response.status, 201, 'product with image should be created');
   const createdProduct = JSON.parse(createProduct.text);
-  assert.equal(createdProduct.product.image, productImage);
+  assert.match(createdProduct.product.image, /^\/media\/products\/[\w-]+\?v=[0-9a-f]+$/, 'uploaded images are served from /media');
+
+  const media = await request(createdProduct.product.image);
+  assert.equal(media.response.status, 200);
+  assert.equal(media.response.headers.get('content-type'), 'image/png');
 
   const profileUpdate = await request('/api/me', {
     method: 'PATCH',

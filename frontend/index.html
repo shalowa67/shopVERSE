@@ -3,351 +3,130 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>shopVERSE</title>
+    <title>ShopVerse — Shop independent stores across Zambia</title>
+    <meta
+      name="description"
+      content="ShopVerse is the marketplace for independent shops. Discover phones, fashion, beauty and home goods from local sellers, pay with mobile money or card, and track every order."
+    />
+    <meta name="theme-color" content="#4f46e5" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="ShopVerse" />
+    <meta property="og:title" content="ShopVerse — Shop independent stores across Zambia" />
+    <meta
+      property="og:description"
+      content="Discover local shops, pay with mobile money or card, and track every order in one place."
+    />
+    <meta name="twitter:card" content="summary" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=2.0.0" />
   </head>
   <body>
-    <div class="app-shell">
-      <header class="topbar">
-        <div class="brand-wrap">
-          <div class="brand-mark">S</div>
-          <div>
-            <p class="eyebrow">Marketplace</p>
-            <h1>shopVERSE</h1>
-          </div>
-        </div>
+    <a class="skip-link" href="#view">Skip to content</a>
 
-        <nav class="nav-actions">
-          <div id="userBadge" class="user-badge hidden"></div>
-          <button class="ghost-button" id="logoutBtn" hidden>Log out</button>
+    <header class="site-header" id="siteHeader">
+      <div class="container header-inner">
+        <a href="/" class="brand" aria-label="ShopVerse home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" width="32" height="32"><rect width="32" height="32" rx="9" fill="currentColor" /><path d="M10 12h12l-1.2 10.2a2 2 0 0 1-2 1.8h-5.6a2 2 0 0 1-2-1.8L10 12Z" fill="#fff" /><path d="M13 12v-1a3 3 0 0 1 6 0v1" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" /></svg>
+          </span>
+          <span class="brand-name">Shop<strong>Verse</strong></span>
+        </a>
+
+        <form class="header-search" id="headerSearch" role="search">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+          <input type="search" name="q" placeholder="Search products, shops and categories" aria-label="Search the marketplace" />
+        </form>
+
+        <nav class="main-nav" id="mainNav" aria-label="Main">
+          <a href="/products" data-nav="products">Explore</a>
+          <a href="/shops" data-nav="shops">Shops</a>
+          <a href="/orders" data-nav="orders" data-auth="customer" hidden>Orders</a>
+          <a href="/studio" data-nav="studio" data-auth="shop_owner" hidden>Studio</a>
+          <a href="/register?role=shop_owner" class="nav-sell" data-auth="guest">Sell on ShopVerse</a>
         </nav>
-      </header>
 
-      <main class="content">
-        <section id="authSection" class="panel auth-panel">
-          <div class="panel-head">
-            <p class="eyebrow">A brighter way to shop local</p>
-            <h2>Your next great find is closer.</h2>
-            <p class="auth-intro-copy">Meet independent shops, discover one-of-a-kind finds, and bring your neighborhood’s best to your doorstep.</p>
+        <div class="header-actions">
+          <button class="icon-button" id="notificationsButton" type="button" aria-label="Notifications" aria-haspopup="true" aria-expanded="false" hidden>
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
+            <span class="count-badge" id="notificationsBadge" hidden>0</span>
+          </button>
+          <button class="icon-button" id="cartButton" type="button" aria-label="Open cart">
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M6 6h15l-1.5 9h-12z" /><path d="M6 6 5 3H2" /><circle cx="9" cy="20" r="1.4" /><circle cx="18" cy="20" r="1.4" /></svg>
+            <span class="count-badge" id="cartBadge" hidden>0</span>
+          </button>
+          <div class="account-area" id="accountArea">
+            <a href="/login" class="button button-ghost button-sm" data-auth="guest">Sign in</a>
+            <a href="/register" class="button button-primary button-sm hide-sm" data-auth="guest">Join free</a>
           </div>
-
-          <div class="tab-row">
-            <button class="tab-button active" data-mode="login">Login</button>
-            <button class="tab-button" data-mode="register">Register</button>
-          </div>
-
-          <form id="authForm" class="auth-form">
-            <div class="field-row">
-              <label>
-                <span>Full name</span>
-                <input type="text" name="name" placeholder="Your full name" />
-              </label>
-            </div>
-
-            <div class="field-row">
-              <label>
-                <span>Email</span>
-                <input type="email" name="email" placeholder="you@example.com" required />
-              </label>
-            </div>
-
-            <div class="field-row">
-              <label>
-                <span>Password</span>
-                <input type="password" name="password" placeholder="Create a password" required />
-              </label>
-            </div>
-
-            <div class="field-row hide" id="roleField">
-              <label>
-                <span>Account type</span>
-                <select name="role">
-                  <option value="customer">Customer</option>
-                  <option value="shop_owner">Shop owner</option>
-                </select>
-              </label>
-            </div>
-
-            <div class="field-row hide" id="shopNameField">
-              <label>
-                <span>Shop name</span>
-                <input type="text" name="shopName" placeholder="Your shop name" />
-              </label>
-            </div>
-
-            <div class="field-row hide" id="shopDescriptionField">
-              <label>
-                <span>Shop description</span>
-                <textarea name="shopDescription" rows="3" placeholder="Tell shoppers what your shop sells"></textarea>
-              </label>
-            </div>
-
-            <div class="field-row hide" id="shopLocationField">
-              <label>
-                <span>Shop location</span>
-                <input type="text" name="shopLocation" placeholder="e.g. Lagos, Nigeria" />
-              </label>
-            </div>
-
-            <button type="submit" class="primary-button" id="authSubmitButton">Login</button>
-          </form>
-        </section>
-
-        <section id="appSection" class="dashboard hidden">
-          <section class="dashboard-hero">
-            <div class="dashboard-hero-copy">
-              <p class="eyebrow">Good things are nearby</p>
-              <h2>Find your next favorite thing.</h2>
-              <p>Explore local shops, discover something new, and support the people who make your community special.</p>
-              <a class="hero-link" href="#shopsList">Explore the marketplace <span aria-hidden="true">↗</span></a>
-            </div>
-            <div class="hero-art" aria-hidden="true">
-              <span class="hero-spark hero-spark-one">✦</span>
-              <span class="hero-spark hero-spark-two">✳</span>
-              <span class="hero-orbit hero-orbit-one"></span>
-              <span class="hero-orbit hero-orbit-two"></span>
-              <span class="hero-orbit hero-orbit-three"></span>
-              <span class="hero-sticker">SHOP<br />LOCAL</span>
-            </div>
-          </section>
-          <div class="stats-grid" id="statsGrid"></div>
-
-          <div class="content-grid">
-            <section class="panel">
-              <div class="panel-head split-head">
-                <div>
-                  <p class="eyebrow">Marketplace</p>
-                  <h2>Browse shops</h2>
-                </div>
-              </div>
-
-              <div class="field-row search-field">
-                <label>
-                  <span>Search shops</span>
-                  <input id="shopSearchInput" type="search" placeholder="Search by name, owner, or category" />
-                </label>
-              </div>
-
-              <div id="shopsList" class="card-list"></div>
-            </section>
-
-            <aside class="panel cart-panel">
-              <div class="panel-head split-head">
-                <div>
-                  <p class="eyebrow">Cart</p>
-                  <h2>Your order</h2>
-                </div>
-              </div>
-              <div id="cartList" class="mini-list"></div>
-              <div class="cart-summary">
-                <span>Subtotal</span>
-                <strong id="cartTotal">ZK 0.00</strong>
-              </div>
-              <button id="checkoutBtn" class="primary-button full-width">Place order</button>
-            </aside>
-          </div>
-
-          <section id="ownerPanel" class="panel hidden owner-panel">
-            <div class="panel-head split-head">
-              <div>
-                <p class="eyebrow">Owner studio</p>
-                <h2>Your storefront</h2>
-                <p class="owner-panel-intro">Shape your shop, keep your catalog current, and follow incoming orders.</p>
-              </div>
-            </div>
-
-            <form id="shopProfileForm" class="stack-form shop-profile-form">
-              <div class="shop-profile-header">
-                <div>
-                  <p class="eyebrow">Brand storefront</p>
-                  <h3>Shop profile</h3>
-                </div>
-                <button type="submit" class="primary-button small-submit">Save profile</button>
-              </div>
-
-              <div class="field-row">
-                <label>
-                  <span>Shop name</span>
-                  <input type="text" name="shopName" placeholder="Your shop name" />
-                </label>
-              </div>
-
-              <div class="field-row">
-                <label>
-                  <span>Shop description</span>
-                  <textarea name="shopDescription" rows="3" placeholder="Tell shoppers what makes your shop special"></textarea>
-                </label>
-              </div>
-
-              <div class="field-row two-up">
-                <label>
-                  <span>Profile image</span>
-                  <input type="file" accept="image/*" name="shopProfileImageFile" />
-                </label>
-                <label>
-                  <span>Banner image</span>
-                  <input type="file" accept="image/*" name="shopBannerImageFile" />
-                </label>
-              </div>
-
-              <div class="field-row two-up">
-                <label>
-                  <span>Theme color</span>
-                  <input type="color" name="shopThemeColor" value="#4f46e5" />
-                </label>
-                <label>
-                  <span>Shop location</span>
-                  <input type="text" name="shopLocation" placeholder="e.g. Lagos, Nigeria" />
-                </label>
-              </div>
-            </form>
-
-            <form id="productForm" class="stack-form">
-              <div class="owner-section-heading">
-                <div>
-                  <p class="eyebrow">Catalog</p>
-                  <h3>Add a product</h3>
-                  <p class="owner-panel-intro">Add as many products as you need. Drag products to arrange how they appear in your storefront.</p>
-                </div>
-              </div>
-              <div class="field-row inline-field">
-                <label>
-                  <span>Product name</span>
-                  <input type="text" name="name" placeholder="Product name" required />
-                </label>
-              </div>
-              <div class="field-row inline-field">
-                <label>
-                  <span>Category</span>
-                  <input type="text" name="category" list="productCategories" placeholder="e.g. Phones, Perfumes, Laptops" maxlength="40" required />
-                </label>
-                <datalist id="productCategories">
-                  <option value="Phones"></option>
-                  <option value="Laptops"></option>
-                  <option value="Perfumes"></option>
-                  <option value="Electronics"></option>
-                  <option value="Fashion"></option>
-                  <option value="Beauty & skincare"></option>
-                  <option value="Home & living"></option>
-                  <option value="Accessories"></option>
-                  <option value="Food & groceries"></option>
-                  <option value="Books & stationery"></option>
-                  <option value="Sports & outdoors"></option>
-                  <option value="Toys & games"></option>
-                  <option value="Other"></option>
-                </datalist>
-              </div>
-              <div class="field-row inline-field">
-                <label>
-                  <span>Price</span>
-                  <input type="number" step="0.01" min="0" name="price" placeholder="0.00" required />
-                </label>
-              </div>
-              <div class="field-row inline-field">
-                <label>
-                  <span>Stock</span>
-                  <input type="number" min="1" name="stock" placeholder="Qty" required />
-                </label>
-              </div>
-              <div class="field-row">
-                <label>
-                  <span>Product image</span>
-                  <input type="file" accept="image/*" name="image" />
-                </label>
-              </div>
-              <div class="field-row">
-                <label>
-                  <span>Description</span>
-                  <textarea name="description" rows="2" placeholder="Describe your item"></textarea>
-                </label>
-              </div>
-              <div class="inline-button-row">
-                <button type="submit" class="primary-button" id="productFormSubmit">Add product</button>
-                <button type="button" class="ghost-button hidden" id="cancelProductEditBtn">Cancel</button>
-              </div>
-            </form>
-
-            <div id="ownerProducts" class="card-list"></div>
-          </section>
-
-          <section id="ordersPanel" class="panel">
-            <div class="panel-head split-head">
-              <div>
-                <p class="eyebrow">Orders</p>
-                <h2>Recent activity</h2>
-              </div>
-            </div>
-            <div id="ordersList" class="card-list"></div>
-          </section>
-
-          <section id="notificationsPanel" class="panel">
-            <div class="panel-head split-head">
-              <div>
-                <p class="eyebrow">Alert center</p>
-                <h2>Notifications</h2>
-              </div>
-            </div>
-            <div id="notificationsList" class="mini-list"></div>
-          </section>
-        </section>
-      </main>
-    </div>
-
-    <div id="checkoutModal" class="modal-overlay hidden" aria-hidden="true">
-      <div class="modal-card">
-        <div class="modal-head">
-          <div>
-            <p class="eyebrow">Review</p>
-            <h2>Confirm your order</h2>
-          </div>
-          <button type="button" class="ghost-button" id="closeCheckoutModalBtn">Close</button>
-        </div>
-
-        <div id="checkoutItems" class="mini-list"></div>
-
-        <div class="field-row" style="margin-top: 18px;">
-          <label>
-            <span>Delivery address</span>
-            <textarea id="shippingAddressInput" rows="3" placeholder="Enter the delivery address for this order"></textarea>
-          </label>
-        </div>
-
-        <div class="field-row" style="margin-top: 14px;">
-          <label>
-            <span>Payment method</span>
-            <select id="paymentMethodSelect">
-              <option value="zanaco_card">Zanaco Card</option>
-              <option value="zambia_credit_card">Zambian Credit Card</option>
-              <option value="visa">Visa Card</option>
-              <option value="mastercard">Mastercard</option>
-              <option value="mtn_mobile_money">MTN Mobile Money</option>
-              <option value="airtel_money">Airtel Money</option>
-              <option value="zamtel_money">Zamtel Money</option>
-              <option value="wallet">Wallet</option>
-              <option value="bank_transfer">Bank Transfer</option>
-            </select>
-          </label>
-        </div>
-        <p class="payment-notice">Payments are not connected yet. Orders will remain unpaid until a provider is configured.</p>
-
-        <div class="checkout-total">
-          <span>Total</span>
-          <strong id="checkoutTotal">ZK 0.00</strong>
-        </div>
-
-        <div class="modal-actions">
-          <button type="button" class="ghost-button" id="cancelCheckoutBtn">Cancel</button>
-          <button type="button" class="primary-button" id="confirmCheckoutBtn">Confirm order</button>
+          <button class="icon-button menu-toggle" id="menuToggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="mainNav">
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+          </button>
         </div>
       </div>
-    </div>
 
-    <script src="src/main.js"></script>
+      <div class="popover notifications-popover" id="notificationsPopover" role="dialog" aria-label="Notifications" hidden></div>
+    </header>
+
+    <main id="view" class="view" tabindex="-1" aria-live="polite">
+      <noscript>
+        <div class="container noscript">ShopVerse needs JavaScript enabled to run. Please enable it and reload the page.</div>
+      </noscript>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-grid">
+        <div class="footer-brand">
+          <a href="/" class="brand">
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 32 32" width="28" height="28"><rect width="32" height="32" rx="9" fill="currentColor" /><path d="M10 12h12l-1.2 10.2a2 2 0 0 1-2 1.8h-5.6a2 2 0 0 1-2-1.8L10 12Z" fill="#fff" /><path d="M13 12v-1a3 3 0 0 1 6 0v1" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" /></svg>
+            </span>
+            <span class="brand-name">Shop<strong>Verse</strong></span>
+          </a>
+          <p>The marketplace for independent shops. Discover local sellers, pay your way and follow every order to your door.</p>
+        </div>
+        <div>
+          <h4>Shop</h4>
+          <a href="/products">All products</a>
+          <a href="/shops">All shops</a>
+          <a href="/products?sort=newest">New arrivals</a>
+        </div>
+        <div>
+          <h4>Sell</h4>
+          <a href="/register?role=shop_owner">Open a shop</a>
+          <a href="/studio">Seller studio</a>
+        </div>
+        <div>
+          <h4>Pay with</h4>
+          <p class="footer-pay">MTN MoMo · Airtel Money · Zamtel · Visa · Mastercard · Bank transfer</p>
+        </div>
+      </div>
+      <div class="container footer-bottom">
+        <span>© <span id="year"></span> ShopVerse. All rights reserved.</span>
+        <span>Made for independent sellers.</span>
+      </div>
+    </footer>
+
+    <div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
+    <aside class="drawer" id="cartDrawer" role="dialog" aria-modal="true" aria-labelledby="cartDrawerTitle" hidden>
+      <div class="drawer-head">
+        <h2 id="cartDrawerTitle">Your cart</h2>
+        <button type="button" class="icon-button" data-action="close-drawer" aria-label="Close cart">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></svg>
+        </button>
+      </div>
+      <div class="drawer-body" id="cartDrawerBody"></div>
+      <div class="drawer-foot" id="cartDrawerFoot"></div>
+    </aside>
+
+    <div class="modal-root" id="modalRoot"></div>
+    <div class="toast-region" id="toastRegion" role="status" aria-live="polite"></div>
+
+    <script src="/src/main.js?v=2.0.0"></script>
   </body>
 </html>

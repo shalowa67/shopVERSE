@@ -1,12 +1,17 @@
 {
   "name": "shopverse",
-  "version": "1.0.0",
-  "description": "ShopVerse marketplace for shop owners and customers",
+  "version": "2.0.0",
+  "description": "ShopVerse — a multi-vendor marketplace for independent shops and their customers",
   "main": "backend/server.js",
+  "private": true,
+  "engines": {
+    "node": ">=22.5"
+  },
   "scripts": {
     "start": "node --env-file-if-exists=.env backend/server.js",
     "dev": "node --watch --env-file-if-exists=.env backend/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "check": "node --check backend/server.js && node --check frontend/src/main.js"
   },
   "dependencies": {
     "express": "^4.21.2",
