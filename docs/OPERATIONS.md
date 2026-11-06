@@ -94,6 +94,28 @@ If anything doesn't check out, tap **Reject** and say why. The seller can fix it
 apply again. Use **Remove badge** if a verified seller later breaks the rules (for
 example, repeated disputes lost).
 
+## Suspending or deleting a shop
+
+Both are on **Admin → Sellers**, on each seller's card.
+
+**Suspend** is the first step for any problem: complaints, suspected scams, blocked
+drug listings, or a seller who stops responding. It can be undone.
+- The shop and its products are hidden from buyers immediately, and its items are
+  removed from customers' carts.
+- The seller can still sign in to see and finish existing orders, but can't add or
+  edit products or request verification.
+- The seller is notified with the reason you give.
+- **Unsuspend** reverses it. A verified shop becomes visible again.
+
+**Delete** is permanent. It removes the shop, all its products and reviews, and the
+seller's account (they are signed out and can no longer log in).
+- You must type the shop's exact name to confirm.
+- It is **refused while the shop has unsettled orders**: orders not yet delivered or
+  cancelled, or money still held, ready to pay out or due as a refund. This stops
+  customers' money from being left in limbo. Suspend the shop, settle those orders
+  on the **Payments** tab, then delete.
+- Customers keep their past orders in **My orders**.
+
 ## Blocked listings (illegal drugs)
 
 When a seller tries to post a product or shop that mentions illegal drugs, it is
@@ -101,8 +123,8 @@ refused and you get a notification starting with **"Blocked:"** naming the accou
 When you see one:
 
 1. Open **Admin → Sellers** and find the shop.
-2. If it looks deliberate, tap **Remove badge** (or **Reject** if it is pending). The
-   shop is then hidden from buyers immediately.
+2. If it looks deliberate, tap **Suspend** (or **Delete** for repeat offenders). The
+   shop is hidden from buyers immediately.
 3. Keep a note of the account. Repeated attempts are a reason to refuse future
    verification.
 

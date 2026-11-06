@@ -173,6 +173,9 @@ is in `SHOPVERSE_ADMIN_EMAILS`.
 | `GET /api/admin/overview` | Admin | Growth metrics |
 | `GET /api/admin/sellers` | Admin | Sellers with verification details |
 | `POST /api/admin/sellers/:shopId/verification` | Admin | `{ status: 'verified' \| 'rejected' \| 'none', note? }` |
+| `POST /api/admin/sellers/:shopId/suspend` | Admin | Hide the shop and freeze its listings (`{ reason? }`) |
+| `POST /api/admin/sellers/:shopId/unsuspend` | Admin | Lift a suspension |
+| `DELETE /api/admin/sellers/:shopId` | Admin | Permanently delete the shop and seller account (`{ confirmName }`); refused while orders are unsettled |
 | `GET /api/admin/payments` | Admin | Payment and payout work queues |
 | `POST /api/admin/orders/:id/payment` | Admin | `{ action: 'confirm' \| 'reject', note? }` |
 | `POST /api/admin/orders/:id/shops/:shopId/payout` | Admin | Mark a payout as sent (`{ reference? }`) |

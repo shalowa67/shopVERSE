@@ -388,13 +388,14 @@ const isVerifiedShop = (shop) => Boolean(shop && shop.verification && shop.verif
 
 // Only verified shops are visible to buyers and can sell. Their products must also pass
 // the prohibited-items check (this also hides anything listed before the check existed).
-const isListedShop = (shop) => Boolean(shop) && (!REQUIRE_VERIFICATION || isVerifiedShop(shop)) &&
+const isListedShop = (shop) => Boolean(shop) && !shop.suspended && (!REQUIRE_VERIFICATION || isVerifiedShop(shop)) &&
   !moderation.findProhibited(shop.shopName, shop.shopDescription);
 const prohibitedTermIn = (product) => moderation.findProhibited(product.name, product.description, product.category);
 const isListedProduct = (product) => Boolean(product) && isListedShop(getShopById(product.shopId)) && !prohibitedTermIn(product);
 
 // Why a seller's shop or product is hidden from buyers (null when it is visible).
 const hiddenReason = (shop, product = null) => {
+  if (shop && shop.suspended) return 'suspended';
   if (product && prohibitedTermIn(product)) return 'prohibited';
   if (shop && moderation.findProhibited(shop.shopName, shop.shopDescription)) return 'prohibited';
   if (REQUIRE_VERIFICATION && !isVerifiedShop(shop)) return 'unverified';
@@ -438,6 +439,7 @@ const sanitizeUser = (user) => {
     const verification = verificationOf(user);
     Object.assign(result, {
       shopPhone: user.shopPhone || null,
+      suspended: user.suspended ? { at: user.suspended.at, reason: user.suspended.reason || null } : null,
       delivery: market.deliveryOf(user),
       verification: {
         status: verification.status,
@@ -1123,6 +1125,7 @@ app.post('/api/me/verification', authMiddleware,
   requireRole('shop_owner', 'Only shop owners can request verification.'),
   asyncRoute(async (req, res) => {
     const body = req.body || {};
+    rejectIfSuspended(req.user);
     const current = verificationOf(req.user);
     if (current.status === 'verified') fail(409, 'Your shop is already verified.');
 
@@ -1232,8 +1235,15 @@ const productFieldsFromBody = (body, existing) => {
   return fields;
 };
 
+const rejectIfSuspended = (user) => {
+  if (user.suspended) {
+    fail(403, `Your shop has been suspended by ShopVerse${user.suspended.reason ? `: ${user.suspended.reason}` : ''}. Contact ShopVerse support.`);
+  }
+};
+
 // Refuses product text that advertises illegal drugs, and tells the admins.
 const rejectProhibitedProduct = async (req, fields) => {
+  rejectIfSuspended(req.user);
   const term = moderation.findProhibited(fields.name, fields.description, fields.category);
   if (!term) return;
   reportProhibitedAttempt(req.user, term, `a product ("${String(fields.name).slice(0, 60)}")`);
@@ -1720,6 +1730,7 @@ app.get('/api/dashboard', authMiddleware, (req, res) => {
         verification: verificationOf(req.user).status,
         // Whether buyers can see and buy from this shop yet, and how many products are blocked.
         listed: isListedShop(req.user),
+        suspended: req.user.suspended ? { at: req.user.suspended.at, reason: req.user.suspended.reason || null } : null,
         requireVerification: REQUIRE_VERIFICATION,
         blockedProductCount: shopProducts.filter((product) => prohibitedTermIn(product)).length
       }
@@ -1797,7 +1808,9 @@ app.get('/api/admin/sellers', ...adminOnly, (req, res) => {
         productCount: products.filter((product) => product.shopId === user.id).length,
         orderCount: shopOrders.length,
         deliveredCount: shopOrders.filter((order) => order.shopStatuses[user.id] === 'delivered').length,
-        disputeCount: shopOrders.filter((order) => (order.fulfilment[user.id] || {}).dispute).length
+        disputeCount: shopOrders.filter((order) => (order.fulfilment[user.id] || {}).dispute).length,
+        unsettledCount: unsettledOrdersFor(user.id).length,
+        listed: isListedShop(user)
       };
     })
     .sort((a, b) => statusRank[a.verification.status] - statusRank[b.verification.status] ||
@@ -1823,6 +1836,75 @@ app.post('/api/admin/sellers/:shopId/verification', ...adminOnly, asyncRoute(asy
   createNotification(shop.id, 'review', messages[status]);
   await persistAppState();
   res.json({ success: true, seller: sanitizeUser(shop) });
+}));
+
+// Orders a shop still has obligations on: not yet finished, or money not yet settled.
+const unsettledOrdersFor = (shopId) => orders.filter((order) => {
+  const status = order.shopStatuses[shopId];
+  if (!status) return false;
+  return !FINAL_STATUSES.includes(status) ||
+    ['held', 'ready', 'on_hold', 'refund_due'].includes(market.payoutState(order, shopId));
+});
+
+const requireSeller = (shopId) => {
+  const shop = getShopById(shopId);
+  if (!shop) fail(404, 'Seller not found.');
+  return shop;
+};
+
+// Suspend: hide the shop from buyers at once and stop the seller adding or editing products.
+app.post('/api/admin/sellers/:shopId/suspend', ...adminOnly, asyncRoute(async (req, res) => {
+  const shop = requireSeller(req.params.shopId);
+  const reason = text((req.body || {}).reason, { field: 'Reason', max: 300 });
+  shop.suspended = { at: nowIso(), by: req.user.id, reason: reason || null };
+  Object.values(carts).forEach((cart) => {
+    cart.items = (cart.items || []).filter((item) => (getProductById(item.productId) || {}).shopId !== shop.id);
+  });
+  createNotification(shop.id, 'status', `Your shop has been suspended by ShopVerse${reason ? `: ${reason}` : '.'} Buyers can't see it. Contact ShopVerse support.`);
+  await persistAppState();
+  res.json({ success: true, seller: sanitizeUser(shop) });
+}));
+
+app.post('/api/admin/sellers/:shopId/unsuspend', ...adminOnly, asyncRoute(async (req, res) => {
+  const shop = requireSeller(req.params.shopId);
+  if (!shop.suspended) fail(409, 'This shop is not suspended.');
+  delete shop.suspended;
+  createNotification(shop.id, 'status', `Your shop is no longer suspended.${isVerifiedShop(shop) || !REQUIRE_VERIFICATION ? ' It is visible to buyers again.' : ' Request verification to start selling.'}`);
+  await persistAppState();
+  res.json({ success: true, seller: sanitizeUser(shop) });
+}));
+
+// Delete: permanently remove the shop, its products and the seller's account. Past orders
+// stay in customers' history. Refused while the shop still has unsettled orders.
+app.delete('/api/admin/sellers/:shopId', ...adminOnly, asyncRoute(async (req, res) => {
+  const shop = requireSeller(req.params.shopId);
+  if (String((req.body || {}).confirmName || '').trim() !== shop.shopName) {
+    fail(400, 'Type the shop name exactly to confirm deleting it.');
+  }
+  const unsettled = unsettledOrdersFor(shop.id);
+  if (unsettled.length) {
+    fail(409, `${shop.shopName} still has ${unsettled.length} unsettled order${unsettled.length === 1 ? '' : 's'} (open, or money not yet paid out or refunded). Suspend the shop, settle ${unsettled.length === 1 ? 'it' : 'them'} on the Payments tab, then delete.`);
+  }
+
+  const productIds = new Set(products.filter((product) => product.shopId === shop.id).map((product) => product.id));
+  for (let index = products.length - 1; index >= 0; index -= 1) {
+    if (productIds.has(products[index].id)) products.splice(index, 1);
+  }
+  for (let index = productReviews.length - 1; index >= 0; index -= 1) {
+    if (productIds.has(productReviews[index].productId)) productReviews.splice(index, 1);
+  }
+  Object.values(carts).forEach((cart) => {
+    cart.items = (cart.items || []).filter((item) => !productIds.has(item.productId));
+  });
+  delete carts[shop.id];
+  for (let index = notifications.length - 1; index >= 0; index -= 1) {
+    if (notifications[index].userId === shop.id) notifications.splice(index, 1);
+  }
+  for (const [hash, session] of sessions) if (session.userId === shop.id) sessions.delete(hash);
+  users.splice(users.indexOf(shop), 1);
+
+  await persistAppState();
+  res.json({ success: true, deleted: { id: shop.id, shopName: shop.shopName, products: productIds.size } });
 }));
 
 app.get('/api/admin/payments', ...adminOnly, (req, res) => {

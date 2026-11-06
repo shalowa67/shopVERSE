@@ -319,6 +319,55 @@ test('only verified shops are visible to buyers and can sell', async () => {
   assert.match(order.data.message, /no longer available/);
 });
 
+test('admins can suspend and unsuspend a shop', async () => {
+  const { owner, admin, customer } = await tokens();
+  await api('/api/cart/add', { method: 'POST', token: customer, body: { productId: 'prod-1', quantity: 1 } });
+
+  const forbidden = await api('/api/admin/sellers/shop-owner-demo/suspend', { method: 'POST', token: owner, body: {} });
+  assert.equal(forbidden.status, 403, 'sellers cannot suspend shops');
+
+  const suspended = await api('/api/admin/sellers/shop-owner-demo/suspend', { method: 'POST', token: admin, body: { reason: 'Under review' } });
+  assert.equal(suspended.status, 200);
+  assert.equal((await api('/api/shops/shop-owner-demo')).status, 404, 'hidden from buyers');
+  assert.equal((await api('/api/products/prod-1')).status, 404);
+  assert.deepEqual((await api('/api/cart', { token: customer })).data.cart.items, [], 'removed from carts');
+
+  const add = await api('/api/products', { method: 'POST', token: owner, body: { name: 'New mug', price: 10, stock: 1 } });
+  assert.equal(add.status, 403, 'a suspended seller cannot add products');
+  assert.match(add.data.message, /Under review/);
+  const preview = await api('/api/shops/shop-owner-demo', { token: owner });
+  assert.equal(preview.data.shop.hiddenReason, 'suspended');
+
+  const restored = await api('/api/admin/sellers/shop-owner-demo/unsuspend', { method: 'POST', token: admin });
+  assert.equal(restored.status, 200);
+  assert.equal((await api('/api/shops/shop-owner-demo')).status, 200, 'visible again');
+});
+
+test('admins can delete a shop once its orders are settled', async () => {
+  const { customer, owner, admin } = await tokens();
+  const order = await placeOrder(customer, [['prod-1', 1]], { paymentMethod: 'cash_on_delivery' });
+
+  const wrongName = await api('/api/admin/sellers/shop-owner-demo', { method: 'DELETE', token: admin, body: { confirmName: 'Wrong' } });
+  assert.equal(wrongName.status, 400, 'the shop name must be typed to confirm');
+
+  const blocked = await api('/api/admin/sellers/shop-owner-demo', { method: 'DELETE', token: admin, body: { confirmName: 'Aisha Essentials' } });
+  assert.equal(blocked.status, 409, 'cannot delete while an order is open');
+  assert.match(blocked.data.message, /1 unsettled order/);
+
+  await api(`/api/orders/${order.id}/status`, { method: 'PATCH', token: owner, body: { status: 'delivered' } });
+  const deleted = await api('/api/admin/sellers/shop-owner-demo', { method: 'DELETE', token: admin, body: { confirmName: 'Aisha Essentials' } });
+  assert.equal(deleted.status, 200);
+  assert.equal(deleted.data.deleted.products, 3);
+
+  assert.equal((await api('/api/shops/shop-owner-demo')).status, 404);
+  assert.equal((await api('/api/me', { token: owner })).status, 401, "the seller's sessions are ended");
+  const login = await api('/api/login', { method: 'POST', body: { email: 'owner@shopverse.com', password: '123456' } });
+  assert.equal(login.status, 401, 'the account no longer exists');
+  const history = (await api('/api/my-orders', { token: customer })).data.orders.find((entry) => entry.id === order.id);
+  assert.ok(history, "the customer's order history is kept");
+  assert.equal(history.items[0].shopName, 'Aisha Essentials');
+});
+
 test('listings and shops that advertise illegal drugs are refused and reported', async () => {
   const { owner, admin } = await tokens();
 

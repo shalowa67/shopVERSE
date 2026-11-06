@@ -1190,7 +1190,9 @@ async function viewProduct({ id, params }) {
   setView(`
     <div class="container">
       ${product.listed === false ? `<div class="notice notice-warning" style="margin-top:20px">${icon('alert')}<span><strong>Preview: buyers can't see this product.</strong> ${
-        product.hiddenReason === 'prohibited'
+        product.hiddenReason === 'suspended'
+          ? 'The shop has been suspended by ShopVerse.'
+          : product.hiddenReason === 'prohibited'
           ? 'It mentions a prohibited item. Illegal drugs cannot be sold or advertised on ShopVerse.'
           : "The shop isn't verified yet. Only verified shops can sell on ShopVerse."}</span></div>` : ''}
       <nav class="breadcrumb" aria-label="Breadcrumb" style="padding-top: 28px">
@@ -1334,7 +1336,9 @@ async function viewShop({ id, params }) {
   const hiddenNotice = shop.listed === false ? `
     <div class="container" style="padding-top:16px">
       <div class="notice notice-warning">${icon('alert')}<span><strong>Preview: buyers can't see this shop.</strong> ${
-        shop.hiddenReason === 'prohibited'
+        shop.hiddenReason === 'suspended'
+          ? 'It has been suspended by ShopVerse.'
+          : shop.hiddenReason === 'prohibited'
           ? 'It mentions a prohibited item. Illegal drugs cannot be sold or advertised on ShopVerse.'
           : `Only verified shops are visible on ShopVerse.${isMine ? ' <a class="link" href="/studio?tab=profile#verification">Request verification</a>' : ''}`}</span></div>
     </div>` : '';
@@ -1961,9 +1965,11 @@ async function viewStudio({ id, query }) {
         </div>
       </div>
       ${query.get('welcome') ? `<div class="notice notice-success" style="margin-bottom:20px">${icon('sparkle')}<span><strong>Your shop is created!</strong> Next: <a class="link" href="/studio?tab=profile#verification">request verification</a> and add your products. Your shop goes live for buyers once ShopVerse verifies it.</span></div>` : ''}
-      ${!stats.listed && stats.requireVerification && stats.verification === 'pending' ? `
+      ${stats.suspended ? `
+        <div class="notice notice-warning" style="margin-bottom:20px">${icon('alert')}<span><strong>Your shop has been suspended by ShopVerse.</strong>${stats.suspended.reason ? ` Reason: ${h(stats.suspended.reason)}.` : ''} Buyers can't see it and you can't add or edit products. Contact ShopVerse support.</span></div>` : ''}
+      ${!stats.suspended && !stats.listed && stats.requireVerification && stats.verification === 'pending' ? `
         <div class="notice" style="margin-bottom:20px">${icon('info')}<span><strong>Your shop is waiting for verification.</strong> Buyers can't see it yet. Keep adding products: they go live as soon as ShopVerse verifies you.</span></div>` : ''}
-      ${!stats.listed && stats.requireVerification && stats.verification !== 'pending' && stats.verification !== 'verified' ? `
+      ${!stats.suspended && !stats.listed && stats.requireVerification && stats.verification !== 'pending' && stats.verification !== 'verified' ? `
         <div class="notice notice-warning" style="margin-bottom:20px">${icon('alert')}<span><strong>Your shop is hidden from buyers until it is verified.</strong> Only verified shops can sell on ShopVerse. <a class="link" href="/studio?tab=profile#verification">Request verification</a></span></div>` : ''}
       ${stats.blockedProductCount ? `
         <div class="notice notice-warning" style="margin-bottom:20px">${icon('alert')}<span><strong>${plural(stats.blockedProductCount, 'product')} hidden for breaking the rules.</strong> Illegal drugs cannot be sold or advertised on ShopVerse. Edit or delete the products marked "Blocked".</span></div>` : ''}
@@ -2592,8 +2598,11 @@ function renderAdminSellers() {
                   <span>${icon('receipt')} ${h(seller.orderCount)} orders · ${h(seller.deliveredCount)} delivered${seller.disputeCount ? ` · ${h(seller.disputeCount)} disputes` : ''}</span>
                 </div>
               </div>
-              <span class="badge ${statusTone[v.status] || ''}">${h(v.status === 'none' ? 'not verified' : v.status)}</span>
+              ${seller.suspended
+                ? '<span class="badge badge-danger">suspended</span>'
+                : `<span class="badge ${statusTone[v.status] || ''}">${h(v.status === 'none' ? 'not verified' : v.status)}</span>`}
             </div>
+            ${seller.suspended ? `<p class="dispute-reason">${icon('alert')} Suspended ${h(formatDate(seller.suspended.at))}${seller.suspended.reason ? `: ${h(seller.suspended.reason)}` : ''}</p>` : ''}
             ${v.status === 'pending' ? `
               <div class="seller-request">
                 <div><span>Business name</span><strong>${h(v.businessName || '–')}</strong></div>
@@ -2605,6 +2614,10 @@ function renderAdminSellers() {
               ${v.status !== 'verified' ? `<button type="button" class="button button-primary button-xs" data-action="admin-verify" data-id="${h(seller.id)}" data-status="verified">${icon('check')} Verify</button>` : ''}
               ${v.status === 'pending' ? `<button type="button" class="button button-danger-ghost button-xs" data-action="admin-verify" data-id="${h(seller.id)}" data-status="rejected">Reject</button>` : ''}
               ${v.status === 'verified' ? `<button type="button" class="button button-ghost button-xs" data-action="admin-verify" data-id="${h(seller.id)}" data-status="none">Remove badge</button>` : ''}
+              ${seller.suspended
+                ? `<button type="button" class="button button-outline button-xs" data-action="admin-unsuspend" data-id="${h(seller.id)}">Unsuspend</button>`
+                : `<button type="button" class="button button-ghost button-xs" data-action="admin-suspend" data-id="${h(seller.id)}">Suspend</button>`}
+              <button type="button" class="button button-danger-ghost button-xs" data-action="admin-delete-shop" data-id="${h(seller.id)}" data-name="${h(seller.shopName)}" data-unsettled="${h(seller.unsettledCount)}">${icon('trash')} Delete</button>
             </div>
           </article>`;
       }).join('') : emptyState({ iconName: 'store', title: 'No sellers yet', text: 'Sellers appear here as soon as they register.' })}
@@ -2706,6 +2719,52 @@ async function adminAction(element) {
       body = { status };
     }
     path = `/api/admin/sellers/${encodeURIComponent(id)}/verification`;
+  } else if (action === 'admin-suspend') {
+    const reason = await promptText({
+      title: 'Suspend this shop?',
+      message: "The shop is hidden from buyers straight away, its items are removed from carts, and the seller can't add or edit products. You can unsuspend it later.",
+      label: 'Reason (sent to the seller)',
+      placeholder: 'e.g. Under review after a customer complaint',
+      confirmLabel: 'Suspend shop',
+      danger: true
+    });
+    if (reason === null) return;
+    body = { reason };
+    path = `/api/admin/sellers/${encodeURIComponent(id)}/suspend`;
+  } else if (action === 'admin-unsuspend') {
+    const ok = await confirmDialog({ title: 'Unsuspend this shop?', message: 'If it is verified, it becomes visible to buyers again.', confirmLabel: 'Unsuspend' });
+    if (!ok) return;
+    path = `/api/admin/sellers/${encodeURIComponent(id)}/unsuspend`;
+  } else if (action === 'admin-delete-shop') {
+    const name = element.dataset.name;
+    const unsettled = Number(element.dataset.unsettled) || 0;
+    if (unsettled) {
+      toast(`${name} has ${plural(unsettled, 'unsettled order')}. Suspend it and settle ${unsettled === 1 ? 'it' : 'them'} on the Payments tab before deleting.`, 'error');
+      return;
+    }
+    const typed = await promptText({
+      title: 'Delete this shop permanently?',
+      message: `This deletes ${name}, all its products and the seller's account. It cannot be undone. Customers keep their past orders. Type the shop name to confirm.`,
+      label: `Type "${name}"`,
+      confirmLabel: 'Delete permanently',
+      required: true,
+      danger: true
+    });
+    if (typed === null) return;
+    if (typed !== name) {
+      toast("The name didn't match, so nothing was deleted.", 'error');
+      return;
+    }
+    try {
+      setBusy(element, true);
+      await apiRequest(`/api/admin/sellers/${encodeURIComponent(id)}`, { method: 'DELETE', body: { confirmName: typed } });
+      toast(`${name} was deleted.`, 'success');
+      render();
+    } catch (error) {
+      reportApiError(error);
+      setBusy(element, false);
+    }
+    return;
   } else if (action === 'admin-payment') {
     if (what === 'reject') {
       const note = await promptText({ title: 'Payment not found', label: 'Message to the customer (optional)', placeholder: 'e.g. No payment received with this reference', confirmLabel: 'Reject payment', danger: true });
@@ -3106,6 +3165,9 @@ async function handleAction(action, element, event) {
       openDispute(element.dataset.id, element.dataset.shop, element.dataset.shopName);
       break;
     case 'admin-verify':
+    case 'admin-suspend':
+    case 'admin-unsuspend':
+    case 'admin-delete-shop':
     case 'admin-payment':
     case 'admin-payout':
     case 'admin-refund':
