@@ -471,11 +471,26 @@ test('shop owners can set a visible location for customers', async () => {
   const registeredOwner = JSON.parse(registerResponse.text);
   assert.equal(registeredOwner.user.shopLocation, 'Lagos, Nigeria');
 
+  const beforeVerification = JSON.parse((await request('/api/shops')).text);
+  assert.ok(!beforeVerification.shops.some((shop) => shop.name === 'Maya Market'), 'new shops stay hidden until verified');
+
+  const adminLogin = JSON.parse((await request('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'admin@shopverse.com', password: '123456' })
+  })).text);
+  const verified = await request(`/api/admin/sellers/${registeredOwner.user.id}/verification`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminLogin.token}` },
+    body: JSON.stringify({ status: 'verified' })
+  });
+  assert.equal(verified.response.status, 200);
+
   const shopsResponse = await request('/api/shops');
   const shopData = JSON.parse(shopsResponse.text);
   const foundShop = shopData.shops.find((shop) => shop.name === 'Maya Market');
 
-  assert.ok(foundShop, 'shop should be listed publicly');
+  assert.ok(foundShop, 'shop should be listed publicly once verified');
   assert.equal(foundShop.location, 'Lagos, Nigeria');
 });
 

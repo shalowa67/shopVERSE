@@ -81,6 +81,24 @@ card and product pages.
 
 ## Verified sellers
 
+**Only verified shops can sell.** A new shop can set up its profile and add products
+straight away, but buyers can't see it or buy from it until an admin verifies it.
+While unverified, the shop and its products are left out of:
+
+- search, the home page and shop listings
+- product pages and storefronts, which return "not found" to everyone except the
+  owner and admins
+- carts and checkout
+- the sitemap and link previews
+
+The seller sees a notice in their studio, and a "Preview: buyers can't see this"
+banner on their own storefront. If an admin later removes the badge, the shop is
+hidden again and its items can no longer be ordered.
+
+To turn this off, set `SHOPVERSE_REQUIRE_VERIFICATION=false`.
+
+### How verification works
+
 1. **Request.** A seller opens **Studio → Shop profile → Seller verification** and
    submits their business name, NRC or PACRA number and WhatsApp number.
 2. **Review.** Admins are notified. The request appears first on **Admin →
@@ -89,6 +107,30 @@ card and product pages.
    the seller). A verified badge can also be removed later.
 4. **Badge.** Verified shops show **✓ Verified** on their storefront, shop cards,
    product cards, product pages, checkout and link previews.
+
+## Prohibited items: illegal drugs
+
+ShopVerse refuses any product or shop that advertises illegal drugs. The check runs
+when a seller:
+
+- creates or edits a product (name, description and category)
+- registers a shop or edits its name or description
+
+Refused items are never saved. The seller sees a message explaining why, and every
+admin gets a notification naming the account and the term that was found.
+
+**What it catches:** cocaine, heroin, methamphetamine/meth, marijuana, cannabis, weed,
+dagga, ganja, chamba, bhang, kush, hashish, mandrax, fentanyl, ketamine, MDMA, LSD,
+THC, opium, magic mushrooms/psilocybin and pre-rolls. It also catches common
+disguises such as `c0caine`, `w33d` and `c o c a i n e`.
+
+**What it allows:** ordinary items whose names contain those letters, such as
+"seaweed", "weed killer", "heroine costume", "methylated spirits" and "Coke 2L".
+
+Anything listed before the check existed is hidden automatically and marked
+**Blocked** in the seller's inventory. The terms live in
+[`backend/moderation.js`](../backend/moderation.js). Admins should still report
+anything suspicious that slips through, and remove the seller's verified badge.
 
 ## WhatsApp and sharing
 

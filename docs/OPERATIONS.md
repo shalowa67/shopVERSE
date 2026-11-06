@@ -76,6 +76,9 @@ An order was cancelled after the buyer paid.
 
 ## Verifying sellers
 
+**Only verified shops can sell.** Until you verify a shop, buyers can't see it or buy
+from it, so check the Sellers tab daily: new sellers are waiting on you to go live.
+
 Requests appear first on **Admin → Sellers** with the business name, NRC or PACRA
 number and a note. Before tapping **Verify**:
 
@@ -90,6 +93,18 @@ number and a note. Before tapping **Verify**:
 If anything doesn't check out, tap **Reject** and say why. The seller can fix it and
 apply again. Use **Remove badge** if a verified seller later breaks the rules (for
 example, repeated disputes lost).
+
+## Blocked listings (illegal drugs)
+
+When a seller tries to post a product or shop that mentions illegal drugs, it is
+refused and you get a notification starting with **"Blocked:"** naming the account.
+When you see one:
+
+1. Open **Admin → Sellers** and find the shop.
+2. If it looks deliberate, tap **Remove badge** (or **Reject** if it is pending). The
+   shop is then hidden from buyers immediately.
+3. Keep a note of the account. Repeated attempts are a reason to refuse future
+   verification.
 
 ## Weekly review
 

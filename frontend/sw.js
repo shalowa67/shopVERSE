@@ -7,13 +7,13 @@
  * Bump VERSION whenever frontend files change so users get the new version.
  */
 
-const VERSION = 'v2.4.0';
+const VERSION = 'v2.5.0';
 const SHELL_CACHE = `shopverse-shell-${VERSION}`;
 const MEDIA_CACHE = 'shopverse-media';
 const SHELL_ASSETS = [
   '/',
-  '/styles.css?v=2.4.0',
-  '/src/main.js?v=2.4.0',
+  '/styles.css?v=2.5.0',
+  '/src/main.js?v=2.5.0',
   '/favicon.svg',
   '/manifest.webmanifest',
   '/icons/icon-192.png',

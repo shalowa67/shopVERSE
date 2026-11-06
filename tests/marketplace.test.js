@@ -240,6 +240,12 @@ test('the app is installable: manifest, icons and service worker are served', as
 });
 
 test('products can be searched, filtered by category and sorted', async () => {
+  // The beauty shop is unverified in the demo data, so its products are hidden until approved.
+  const hidden = await api('/api/products?category=beauty%20%26%20skincare');
+  assert.equal(hidden.data.total, 0);
+  const admin = await login('admin@shopverse.com');
+  await api('/api/admin/sellers/shop-owner-demo-3/verification', { method: 'POST', token: admin, body: { status: 'verified' } });
+
   const beauty = await api('/api/products?category=beauty%20%26%20skincare');
   assert.equal(beauty.data.total, 2);
   assert.ok(beauty.data.products.every((product) => product.category === 'Beauty & skincare'));

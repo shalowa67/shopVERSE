@@ -6,6 +6,7 @@ const { createStore } = require('./storage');
 const { createPostgresStore } = require('./postgres-storage');
 const { seedUsers, seedProducts, demoPaymentAccounts } = require('./seed');
 const market = require('./marketplace');
+const moderation = require('./moderation');
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -38,6 +39,10 @@ const MIN_PASSWORD_LENGTH = 8;
 // Marketplace commission taken from each seller payout (percent of item value).
 // Defaults to 0 so the marketplace is free for sellers at launch.
 const COMMISSION_PERCENT = Math.min(Math.max(Number(process.env.SHOPVERSE_COMMISSION_PERCENT) || 0, 0), 50);
+
+// Shops must be verified by an admin before buyers can see or buy their products.
+// Set SHOPVERSE_REQUIRE_VERIFICATION=false to let unverified shops sell.
+const REQUIRE_VERIFICATION = process.env.SHOPVERSE_REQUIRE_VERIFICATION !== 'false';
 
 // Accounts customers pay into for protected (escrow) payments.
 const PAYMENT_ACCOUNTS = {
@@ -380,6 +385,38 @@ const deriveOrderStatus = (order) => {
 
 const isAdmin = (user) => Boolean(user) && (user.role === 'admin' || ADMIN_EMAILS.includes(String(user.email).toLowerCase()));
 const isVerifiedShop = (shop) => Boolean(shop && shop.verification && shop.verification.status === 'verified');
+
+// Only verified shops are visible to buyers and can sell. Their products must also pass
+// the prohibited-items check (this also hides anything listed before the check existed).
+const isListedShop = (shop) => Boolean(shop) && (!REQUIRE_VERIFICATION || isVerifiedShop(shop)) &&
+  !moderation.findProhibited(shop.shopName, shop.shopDescription);
+const prohibitedTermIn = (product) => moderation.findProhibited(product.name, product.description, product.category);
+const isListedProduct = (product) => Boolean(product) && isListedShop(getShopById(product.shopId)) && !prohibitedTermIn(product);
+
+// Why a seller's shop or product is hidden from buyers (null when it is visible).
+const hiddenReason = (shop, product = null) => {
+  if (product && prohibitedTermIn(product)) return 'prohibited';
+  if (shop && moderation.findProhibited(shop.shopName, shop.shopDescription)) return 'prohibited';
+  if (REQUIRE_VERIFICATION && !isVerifiedShop(shop)) return 'unverified';
+  return null;
+};
+
+// Public pages normally hide unlisted shops; the shop's owner and admins can still see them.
+const viewerOf = (req) => {
+  const token = readToken(req);
+  const session = token ? sessions.get(sha256(token)) : null;
+  return session && session.expiresAt > Date.now() ? getUserById(session.userId) : null;
+};
+const canSeeUnlisted = (req, shopId) => {
+  const viewer = viewerOf(req);
+  return Boolean(viewer) && (viewer.id === shopId || isAdmin(viewer));
+};
+
+const reportProhibitedAttempt = (user, term, what) => {
+  users.filter(isAdmin).forEach((admin) => {
+    createNotification(admin.id, 'review', `Blocked: ${user.shopName || user.name} (${user.email}) tried to post ${what} mentioning "${term}".`);
+  });
+};
 const verificationOf = (user) => ({ status: 'none', ...(user.verification || {}) });
 
 const sanitizeUser = (user) => {
@@ -433,6 +470,8 @@ const serializeProduct = (product, { includeReviews = false } = {}) => {
     shopLocation: shop ? shop.shopLocation || null : null,
     shopThemeColor: shop ? shop.shopThemeColor || DEFAULT_THEME : DEFAULT_THEME,
     shopVerified: isVerifiedShop(shop),
+    listed: isListedProduct(product),
+    hiddenReason: hiddenReason(shop, product),
     name: product.name,
     description: product.description || '',
     category: product.category || 'Other',
@@ -453,8 +492,9 @@ const serializeProduct = (product, { includeReviews = false } = {}) => {
   return result;
 };
 
-const serializeShop = (shop, { includeProducts = false } = {}) => {
-  const shopProducts = getShopProducts(shop.id);
+const serializeShop = (shop, { includeProducts = false, includeHidden = false } = {}) => {
+  // Buyers only see products that are allowed to be sold; the owner sees everything.
+  const shopProducts = getShopProducts(shop.id).filter((product) => includeHidden || !prohibitedTermIn(product));
   const reviews = productReviews.filter((review) => shopProducts.some((product) => product.id === review.productId));
   const categoryCounts = {};
   shopProducts.forEach((product) => {
@@ -472,6 +512,8 @@ const serializeShop = (shop, { includeProducts = false } = {}) => {
     bannerImage: publicImageUrl(shop.shopBannerImage, `/media/shops/${shop.id}/banner`),
     themeColor: shop.shopThemeColor || DEFAULT_THEME,
     productCount: shopProducts.length,
+    listed: isListedShop(shop),
+    hiddenReason: hiddenReason(shop),
     categories: Object.entries(categoryCounts).sort((a, b) => b[1] - a[1]).map(([name]) => name),
     createdAt: shop.createdAt || null,
     ...shopTerms(shop),
@@ -495,7 +537,7 @@ const getCartView = (userId) => {
         price: product.price,
         stock: product.stock,
         image: publicImageUrl(product.image, `/media/products/${product.id}`),
-        available: product.stock >= item.quantity,
+        available: product.stock >= item.quantity && isListedProduct(product),
         lineTotal: roundMoney(product.price * item.quantity),
         shopId: product.shopId,
         shopName: shop ? shop.shopName : 'Unknown shop'
@@ -751,10 +793,10 @@ app.get('/sitemap.xml', (req, res) => {
     { loc: '/shops', priority: '0.8', changefreq: 'daily' },
     { loc: '/install', priority: '0.4', changefreq: 'monthly' }
   ];
-  users.filter((user) => user.role === 'shop_owner').forEach((shop) => {
+  users.filter((user) => user.role === 'shop_owner' && isListedShop(user)).forEach((shop) => {
     entries.push({ loc: `/shops/${encodeURIComponent(shop.id)}`, priority: '0.7', changefreq: 'weekly', lastmod: day(shop.createdAt) });
   });
-  products.filter((product) => getShopById(product.shopId)).forEach((product) => {
+  products.filter(isListedProduct).forEach((product) => {
     entries.push({
       loc: `/products/${encodeURIComponent(product.id)}`,
       priority: '0.6',
@@ -805,8 +847,8 @@ app.get('/api/health', (req, res) => {
 });
 
 app.get('/api/stats', (req, res) => {
-  const shopIds = new Set(users.filter((user) => user.role === 'shop_owner').map((user) => user.id));
-  const listed = products.filter((product) => shopIds.has(product.shopId));
+  const shopIds = new Set(users.filter((user) => user.role === 'shop_owner' && isListedShop(user)).map((user) => user.id));
+  const listed = products.filter(isListedProduct);
   res.json({
     success: true,
     stats: {
@@ -821,7 +863,7 @@ app.get('/api/stats', (req, res) => {
 app.get('/api/categories', (req, res) => {
   const counts = {};
   products.forEach((product) => {
-    if (!getShopById(product.shopId)) return;
+    if (!isListedProduct(product)) return;
     const category = product.category || 'Other';
     counts[category] = (counts[category] || 0) + 1;
   });
@@ -834,7 +876,7 @@ app.get('/api/categories', (req, res) => {
 app.get('/api/shops', (req, res) => {
   const searchTerm = String(req.query.search || '').trim().toLowerCase();
   const shops = users
-    .filter((user) => user.role === 'shop_owner')
+    .filter((user) => user.role === 'shop_owner' && isListedShop(user))
     .map((shop) => serializeShop(shop))
     .filter((shop) => {
       if (!searchTerm) return true;
@@ -848,8 +890,11 @@ app.get('/api/shops', (req, res) => {
 
 app.get('/api/shops/:shopId', (req, res) => {
   const shop = getShopById(req.params.shopId);
-  if (!shop) return res.status(404).json({ success: false, message: 'Shop not found.' });
-  res.json({ success: true, shop: serializeShop(shop, { includeProducts: true }) });
+  const ownerView = Boolean(shop) && canSeeUnlisted(req, shop.id);
+  if (!shop || (!isListedShop(shop) && !ownerView)) {
+    return res.status(404).json({ success: false, message: 'Shop not found.' });
+  }
+  res.json({ success: true, shop: serializeShop(shop, { includeProducts: true, includeHidden: ownerView }) });
 });
 
 const PRODUCT_SORTS = {
@@ -872,7 +917,7 @@ app.get('/api/products', (req, res) => {
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
   const matches = products
-    .filter((product) => getShopById(product.shopId))
+    .filter(isListedProduct)
     .map((product) => serializeProduct(product))
     .filter((product) => {
       if (shopId && product.shopId !== shopId) return false;
@@ -891,7 +936,7 @@ app.get('/api/products', (req, res) => {
 
 app.get('/api/products/:productId', (req, res) => {
   const product = getProductById(req.params.productId);
-  if (!product || !getShopById(product.shopId)) {
+  if (!product || !getShopById(product.shopId) || (!isListedProduct(product) && !canSeeUnlisted(req, product.shopId))) {
     return res.status(404).json({ success: false, message: 'Product not found.' });
   }
   res.json({ success: true, product: serializeProduct(product, { includeReviews: true }) });
@@ -979,6 +1024,12 @@ app.post('/api/register', asyncRoute(async (req, res) => {
   if (body.role === 'shop_owner') {
     if (!String(body.shopName || '').trim()) fail(400, 'Shop owners must provide a shop name.');
     if (!String(body.shopLocation || '').trim()) fail(400, 'Shop owners must provide a shop location so customers can find them.');
+    const term = moderation.findProhibited(body.shopName, body.shopDescription);
+    if (term) {
+      reportProhibitedAttempt({ name, email, shopName: String(body.shopName) }, term, 'a new shop');
+      await persistAppState();
+      fail(400, moderation.PROHIBITED_MESSAGE(term));
+    }
   }
 
   const user = {
@@ -1038,7 +1089,15 @@ app.patch('/api/me', authMiddleware, asyncRoute(async (req, res) => {
     if (existing && existing.id !== req.user.id) fail(409, 'An account with that email already exists.');
     updates.email = email;
   }
-  if (req.user.role === 'shop_owner') Object.assign(updates, shopFieldsFromBody(body, { requireCore: false, existing: req.user }));
+  if (req.user.role === 'shop_owner') {
+    Object.assign(updates, shopFieldsFromBody(body, { requireCore: false, existing: req.user }));
+    const term = moderation.findProhibited(updates.shopName, updates.shopDescription);
+    if (term) {
+      reportProhibitedAttempt(req.user, term, 'a shop profile');
+      await persistAppState();
+      fail(400, moderation.PROHIBITED_MESSAGE(term));
+    }
+  }
 
   // Validate everything first, then apply, so a bad field never leaves a half-updated profile.
   Object.assign(req.user, updates);
@@ -1173,6 +1232,15 @@ const productFieldsFromBody = (body, existing) => {
   return fields;
 };
 
+// Refuses product text that advertises illegal drugs, and tells the admins.
+const rejectProhibitedProduct = async (req, fields) => {
+  const term = moderation.findProhibited(fields.name, fields.description, fields.category);
+  if (!term) return;
+  reportProhibitedAttempt(req.user, term, `a product ("${String(fields.name).slice(0, 60)}")`);
+  await persistAppState();
+  fail(400, moderation.PROHIBITED_MESSAGE(term));
+};
+
 const requireOwnedProduct = (req) => {
   const product = getProductById(req.params.productId);
   if (!product) fail(404, 'Product not found.');
@@ -1184,6 +1252,7 @@ app.post('/api/products', authMiddleware,
   requireRole('shop_owner', 'Only shop owners can add products.'),
   asyncRoute(async (req, res) => {
     const fields = productFieldsFromBody(req.body || {}, null);
+    await rejectProhibitedProduct(req, fields);
     const product = {
       id: crypto.randomUUID(),
       shopId: req.user.id,
@@ -1201,7 +1270,9 @@ app.put('/api/products/:productId', authMiddleware,
   requireRole('shop_owner', 'Only shop owners can update products.'),
   asyncRoute(async (req, res) => {
     const product = requireOwnedProduct(req);
-    Object.assign(product, productFieldsFromBody(req.body || {}, product), { updatedAt: nowIso() });
+    const fields = productFieldsFromBody(req.body || {}, product);
+    await rejectProhibitedProduct(req, fields);
+    Object.assign(product, fields, { updatedAt: nowIso() });
     await persistAppState();
     res.json({ success: true, product: serializeProduct(product) });
   }));
@@ -1271,7 +1342,7 @@ app.get('/api/cart', ...customerOnly('Only customers can use the cart.'), (req, 
 app.post('/api/cart/add', ...customerOnly('Only customers can add products to cart.'), asyncRoute(async (req, res) => {
   const { productId, quantity = 1 } = req.body || {};
   const product = getProductById(productId);
-  if (!product) fail(404, 'Product not found.');
+  if (!product || !isListedProduct(product)) fail(404, 'This product is not available.');
   const requested = parseQuantity(quantity, { allowZero: false });
   if (product.stock <= 0) fail(400, 'This product is sold out.');
 
@@ -1339,7 +1410,9 @@ app.post('/api/orders', ...customerOnly('Only customers can place orders.'), asy
   // Validate the whole cart before touching stock so a failure never leaves partial deductions.
   const lines = cart.items.map((item) => {
     const product = getProductById(item.productId);
-    if (!product) fail(404, 'An item in your cart is no longer available. Please remove it and try again.');
+    if (!product || !isListedProduct(product)) {
+      fail(404, `${product ? product.name : 'An item in your cart'} is no longer available. Please remove it and try again.`);
+    }
     if (item.quantity > product.stock) {
       fail(400, product.stock > 0
         ? `Not enough stock for ${product.name}. Only ${product.stock} left.`
@@ -1644,7 +1717,11 @@ app.get('/api/dashboard', authMiddleware, (req, res) => {
         payoutHeld: roundMoney(shopOrders.filter((order) => ['held', 'on_hold'].includes(order.payout.state)).reduce((sum, order) => sum + order.payout.net, 0)),
         payoutReady: roundMoney(shopOrders.filter((order) => order.payout.state === 'ready').reduce((sum, order) => sum + order.payout.net, 0)),
         payoutPaid: roundMoney(shopOrders.filter((order) => order.payout.state === 'paid').reduce((sum, order) => sum + order.payout.net, 0)),
-        verification: verificationOf(req.user).status
+        verification: verificationOf(req.user).status,
+        // Whether buyers can see and buy from this shop yet, and how many products are blocked.
+        listed: isListedShop(req.user),
+        requireVerification: REQUIRE_VERIFICATION,
+        blockedProductCount: shopProducts.filter((product) => prohibitedTermIn(product)).length
       }
     });
   }
@@ -1901,7 +1978,7 @@ const pagePreview = (req) => {
   if (productMatch) {
     const product = getProductById(decodeURIComponent(productMatch[1]));
     const shop = product && getShopById(product.shopId);
-    if (product && shop) {
+    if (product && shop && isListedProduct(product)) {
       const shopImage = publicImageUrl(shop.shopBannerImage, `/media/shops/${shop.id}/banner`);
       return {
         title: `${product.name} · ${formatZmw(product.price)} | ShopVerse`,
@@ -1913,8 +1990,8 @@ const pagePreview = (req) => {
   }
   if (shopMatch) {
     const shop = getShopById(decodeURIComponent(shopMatch[1]));
-    if (shop) {
-      const count = getShopProducts(shop.id).length;
+    if (shop && isListedShop(shop)) {
+      const count = getShopProducts(shop.id).filter(isListedProduct).length;
       return {
         title: `${shop.shopName}${isVerifiedShop(shop) ? ' ✓' : ''} | Shop on ShopVerse`,
         description: shorten(`${shop.shopDescription || ''} ${count} product${count === 1 ? '' : 's'} · ${shop.shopLocation || 'Zambia'}. Pay safely with mobile money.`, 200),

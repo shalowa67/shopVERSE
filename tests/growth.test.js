@@ -68,7 +68,8 @@ test('phone numbers are normalised to the Zambian international format', () => {
 });
 
 test('delivery fees are added per shop, with free delivery over a threshold', async () => {
-  const { customer } = await tokens();
+  const { customer, admin } = await tokens();
+  await api('/api/admin/sellers/shop-owner-demo-3/verification', { method: 'POST', token: admin, body: { status: 'verified' } });
   // Copperbelt Tech: K50 delivery, free over K1000. Amber & Oud: K35, free over K500.
   const order = await placeOrder(customer, [['prod-7', 1], ['prod-9', 1]]);
   assert.equal(order.itemsTotal, 289 + 145);
@@ -283,8 +284,75 @@ test('search engines get a robots.txt and a sitemap of every shop and product', 
   const xml = await sitemap.text();
   assert.match(xml, /<loc>http:\/\/127\.0\.0\.1:\d+\/products\/prod-5<\/loc>/);
   assert.match(xml, /<loc>http:\/\/127\.0\.0\.1:\d+\/shops\/shop-owner-demo-2<\/loc>/);
-  assert.equal((xml.match(/<url>/g) || []).length, 4 + 3 + 10, 'fixed pages + 3 shops + 10 products');
+  assert.equal((xml.match(/<url>/g) || []).length, 4 + 2 + 7, 'fixed pages + 2 verified shops + their 7 products');
+  assert.doesNotMatch(xml, /shop-owner-demo-3|prod-8/, 'unverified shops are not advertised');
   assert.doesNotMatch(xml, /\/admin|\/studio/);
+});
+
+test('only verified shops are visible to buyers and can sell', async () => {
+  const { customer, beauty, admin } = await tokens();
+
+  const shops = (await api('/api/shops')).data.shops.map((shop) => shop.id);
+  assert.ok(!shops.includes('shop-owner-demo-3'), 'the unverified shop is not listed');
+  assert.equal((await api('/api/shops/shop-owner-demo-3')).status, 404, 'buyers cannot open it');
+  assert.equal((await api('/api/products/prod-8')).status, 404);
+  assert.ok(!(await api('/api/products')).data.products.some((product) => product.id === 'prod-8'));
+  const add = await api('/api/cart/add', { method: 'POST', token: customer, body: { productId: 'prod-8', quantity: 1 } });
+  assert.equal(add.status, 404, 'cannot be bought');
+
+  const ownView = await api('/api/shops/shop-owner-demo-3', { token: beauty });
+  assert.equal(ownView.status, 200, 'the owner can still preview their own shop');
+  assert.equal(ownView.data.shop.listed, false);
+  assert.equal(ownView.data.shop.hiddenReason, 'unverified');
+  assert.equal((await api('/api/shops/shop-owner-demo-3', { token: admin })).status, 200, 'admins can review it');
+  assert.equal((await api('/api/dashboard', { token: beauty })).data.stats.listed, false);
+
+  await api('/api/admin/sellers/shop-owner-demo-3/verification', { method: 'POST', token: admin, body: { status: 'verified' } });
+  assert.equal((await api('/api/shops/shop-owner-demo-3')).status, 200, 'visible once verified');
+  const added = await api('/api/cart/add', { method: 'POST', token: customer, body: { productId: 'prod-8', quantity: 1 } });
+  assert.equal(added.status, 200);
+
+  // Removing the badge hides the shop again, and checkout refuses its items.
+  await api('/api/admin/sellers/shop-owner-demo-3/verification', { method: 'POST', token: admin, body: { status: 'none', note: 'Test' } });
+  const order = await api('/api/orders', { method: 'POST', token: customer, body: { shippingAddress: 'Plot 5, Lusaka', paymentMethod: 'cash_on_delivery' } });
+  assert.equal(order.status, 404);
+  assert.match(order.data.message, /no longer available/);
+});
+
+test('listings and shops that advertise illegal drugs are refused and reported', async () => {
+  const { owner, admin } = await tokens();
+
+  for (const listing of [
+    { name: 'Premium cocaine', price: 100, stock: 1 },
+    { name: 'Fresh W33D 5g', price: 100, stock: 1 },
+    { name: 'Party pack', description: 'Best dagga in Lusaka', price: 100, stock: 1 },
+    { name: 'Tablets', category: 'Mandrax', price: 100, stock: 1 }
+  ]) {
+    const result = await api('/api/products', { method: 'POST', token: owner, body: listing });
+    assert.equal(result.status, 400, `${JSON.stringify(listing)} should be refused`);
+    assert.match(result.data.message, /Illegal drugs cannot be sold or advertised/);
+  }
+
+  const allowed = await api('/api/products', { method: 'POST', token: owner, body: { name: 'Weed killer 1L', category: 'Home & living', price: 80, stock: 4 } });
+  assert.equal(allowed.status, 201, 'garden weed killer is fine');
+  const seaweed = await api('/api/products', { method: 'POST', token: owner, body: { name: 'Seaweed snacks', price: 20, stock: 4 } });
+  assert.equal(seaweed.status, 201);
+
+  const edit = await api('/api/products/prod-1', { method: 'PUT', token: owner, body: { name: 'Mug set', description: 'comes with free ganja', price: 10, stock: 1 } });
+  assert.equal(edit.status, 400, 'editing a product to add drugs is refused too');
+
+  const profile = await api('/api/me', { method: 'PATCH', token: owner, body: { shopDescription: 'We sell cannabis and more' } });
+  assert.equal(profile.status, 400);
+
+  const shopSignup = await api('/api/register', {
+    method: 'POST',
+    body: { name: 'Bad Actor', email: 'bad@example.com', password: 'long-password', role: 'shop_owner', shopName: 'Kush Corner', shopLocation: 'Lusaka' }
+  });
+  assert.equal(shopSignup.status, 400, 'a shop cannot be named after a drug');
+
+  const alerts = (await api('/api/notifications', { token: admin })).data.notifications.filter((item) => item.message.startsWith('Blocked:'));
+  assert.ok(alerts.length >= 7, `admins are told about each attempt (got ${alerts.length})`);
+  assert.ok(alerts.some((item) => item.message.includes('owner@shopverse.com')));
 });
 
 test('shared product and shop links get their own preview tags', async () => {

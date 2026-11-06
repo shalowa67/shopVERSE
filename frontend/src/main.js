@@ -1189,6 +1189,10 @@ async function viewProduct({ id, params }) {
 
   setView(`
     <div class="container">
+      ${product.listed === false ? `<div class="notice notice-warning" style="margin-top:20px">${icon('alert')}<span><strong>Preview: buyers can't see this product.</strong> ${
+        product.hiddenReason === 'prohibited'
+          ? 'It mentions a prohibited item. Illegal drugs cannot be sold or advertised on ShopVerse.'
+          : "The shop isn't verified yet. Only verified shops can sell on ShopVerse."}</span></div>` : ''}
       <nav class="breadcrumb" aria-label="Breadcrumb" style="padding-top: 28px">
         <a href="/">Home</a><span>/</span>
         <a href="/products?category=${encodeURIComponent(product.category)}">${h(product.category)}</a><span>/</span>
@@ -1327,8 +1331,16 @@ async function viewShop({ id, params }) {
 
   const banner = safeImageUrl(shop.bannerImage);
   const isMine = state.user && state.user.id === shop.id;
+  const hiddenNotice = shop.listed === false ? `
+    <div class="container" style="padding-top:16px">
+      <div class="notice notice-warning">${icon('alert')}<span><strong>Preview: buyers can't see this shop.</strong> ${
+        shop.hiddenReason === 'prohibited'
+          ? 'It mentions a prohibited item. Illegal drugs cannot be sold or advertised on ShopVerse.'
+          : `Only verified shops are visible on ShopVerse.${isMine ? ' <a class="link" href="/studio?tab=profile#verification">Request verification</a>' : ''}`}</span></div>
+    </div>` : '';
 
   setView(`
+    ${hiddenNotice}
     <section class="storefront-hero" style="--accent-c: ${safeColor(shop.themeColor)}">
       <div class="storefront-banner" ${banner ? `style="background-image: ${h(cssUrl(banner))}"` : ''}></div>
       <div class="container storefront-info">
@@ -1948,9 +1960,13 @@ async function viewStudio({ id, query }) {
           <button type="button" class="button button-primary" data-action="new-product">${icon('plus')} Add product</button>
         </div>
       </div>
-      ${query.get('welcome') ? `<div class="notice notice-success" style="margin-bottom:20px">${icon('sparkle')}<span><strong>Your shop is live!</strong> Add your first products, then share your shop link on WhatsApp from the <a class="link" href="/studio?tab=grow">Share &amp; grow</a> tab.</span></div>` : ''}
-      ${stats.verification !== 'verified' && stats.verification !== 'pending' ? `
-        <div class="notice" style="margin-bottom:20px">${icon('shield')}<span><strong>Get the ✓ Verified badge.</strong> Verified shops win more buyers' trust. <a class="link" href="/studio?tab=profile#verification">Request verification</a></span></div>` : ''}
+      ${query.get('welcome') ? `<div class="notice notice-success" style="margin-bottom:20px">${icon('sparkle')}<span><strong>Your shop is created!</strong> Next: <a class="link" href="/studio?tab=profile#verification">request verification</a> and add your products. Your shop goes live for buyers once ShopVerse verifies it.</span></div>` : ''}
+      ${!stats.listed && stats.requireVerification && stats.verification === 'pending' ? `
+        <div class="notice" style="margin-bottom:20px">${icon('info')}<span><strong>Your shop is waiting for verification.</strong> Buyers can't see it yet. Keep adding products: they go live as soon as ShopVerse verifies you.</span></div>` : ''}
+      ${!stats.listed && stats.requireVerification && stats.verification !== 'pending' && stats.verification !== 'verified' ? `
+        <div class="notice notice-warning" style="margin-bottom:20px">${icon('alert')}<span><strong>Your shop is hidden from buyers until it is verified.</strong> Only verified shops can sell on ShopVerse. <a class="link" href="/studio?tab=profile#verification">Request verification</a></span></div>` : ''}
+      ${stats.blockedProductCount ? `
+        <div class="notice notice-warning" style="margin-bottom:20px">${icon('alert')}<span><strong>${plural(stats.blockedProductCount, 'product')} hidden for breaking the rules.</strong> Illegal drugs cannot be sold or advertised on ShopVerse. Edit or delete the products marked "Blocked".</span></div>` : ''}
       <div class="kpi-grid">
         <div class="card kpi"><span>${icon('wallet')} Sales</span><strong>${formatMoney(stats.revenue)}</strong></div>
         <div class="card kpi"><span>${icon('receipt')} Open orders</span><strong>${h(stats.openOrderCount)}</strong></div>
@@ -2062,7 +2078,9 @@ function renderInventory() {
           <div class="thumb thumb-sm" style="--accent-c:${safeColor(state.user.shopThemeColor)}">${mediaMarkup(product.image, product.name)}</div>
           <div class="inventory-name">
             <strong><a href="/products/${encodeURIComponent(product.id)}">${h(product.name)}</a></strong>
-            <span>${product.reviewCount ? `${Number(product.averageRating).toFixed(1)} ★ · ${plural(product.reviewCount, 'review')}` : 'No reviews yet'}</span>
+            <span>${product.hiddenReason === 'prohibited'
+              ? '<span class="badge badge-danger">Blocked: prohibited item</span>'
+              : product.reviewCount ? `${Number(product.averageRating).toFixed(1)} ★ · ${plural(product.reviewCount, 'review')}` : 'No reviews yet'}</span>
             <span class="mobile-meta">${formatMoney(product.price)} · ${h(product.stock)} in stock</span>
           </div>
           <span class="col-category"><span class="badge">${h(product.category)}</span></span>
@@ -2149,6 +2167,7 @@ function openProductEditor(productId) {
             <datalist id="categorySuggestions">${CATEGORY_SUGGESTIONS.map((category) => `<option value="${h(category)}"></option>`).join('')}</datalist>
           </label>
           <label class="field full"><span>Description</span><textarea name="description" rows="4" maxlength="2000" placeholder="Materials, size, what's included…">${h(product ? product.description : '')}</textarea></label>
+          <p class="muted full" style="font-size:.8rem">${icon('shield')} Illegal drugs (including cocaine, weed/dagga, heroin and mandrax) cannot be sold or advertised on ShopVerse. Such listings are refused and reported to ShopVerse admins.</p>
         </div>
       </form>`,
     foot: `<button type="button" class="button button-outline" data-modal-close>Cancel</button>
@@ -2370,7 +2389,7 @@ function verificationCard(user) {
   return `
     <section class="card card-pad verification-card" id="verification">
       <div class="panel-head" style="margin-bottom: 10px">
-        <div><h2>${icon('shield')} Seller verification</h2><p>Verified shops show a ✓ badge. Buyers trust them more, so they get more orders.</p></div>
+        <div><h2>${icon('shield')} Seller verification</h2><p>Only verified shops can sell on ShopVerse. Once verified, your shop and products become visible to buyers with a ✓ badge.</p></div>
         ${verifiedBadge(verification.status === 'verified')}
       </div>
       ${states[verification.status] || ''}
