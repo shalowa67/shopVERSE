@@ -4,6 +4,22 @@ How the marketplace works for buyers, sellers and admins. For the reasons behind
 these features, see the [growth strategy](STRATEGY.md). For day-to-day admin work,
 see the [operations handbook](OPERATIONS.md).
 
+## Sign-in and password recovery
+
+Customers and sellers can sign in with email and password or Google. Google ID
+tokens are verified by the ShopVerse server; a first-time Google sign-in creates a
+customer account. An existing account can be connected to Google only when the
+verified Google email matches its account email. Seller accounts are created using
+the seller registration form.
+
+On **Forgot your password?**, ShopVerse emails a single-use reset link that expires
+after 30 minutes. Successful resets revoke all active sessions. Requests do not
+reveal whether an email address has an account.
+
+Google sign-in requires `GOOGLE_CLIENT_ID`. Password recovery requires Resend's
+`RESEND_API_KEY`, a verified `RESEND_FROM_EMAIL`, and the canonical
+`SHOPVERSE_PUBLIC_URL`. See the [operations handbook](OPERATIONS.md#account-sign-in-and-password-recovery).
+
 ## Protected payments
 
 Buyers pay **ShopVerse**, not the seller. ShopVerse holds the money until the buyer
@@ -24,10 +40,11 @@ has their order.
    - the buyer taps **I received it**, or
    - 3 days pass after the seller marked it delivered with no problem reported.
   For courier deliveries, the buyer selects the company at checkout. A company
-  courier login submits the delivery receipt/reference; a ShopVerse admin must
-  review and approve it. Customer confirmation and automatic release are disabled
-  for these deliveries. This is an in-app confirmation workflow, not a live courier
-  API integration.
+  courier login submits the delivery receipt/reference and the eight-digit code
+  issued to the buyer after the seller marks the shipment as shipped. The code
+  expires after 30 minutes. A ShopVerse admin must review and approve the receipt.
+  Customer confirmation and automatic release are disabled for these deliveries.
+  This is an in-app confirmation workflow, not a live courier API integration.
 6. **Pay out.** The admin sends the seller their money (minus any commission) and
    taps **Mark as paid**.
 
@@ -80,17 +97,22 @@ Each seller sets the following in **Studio → Shop profile → Delivery & picku
 - **Pickup**: buyers can collect from the shop for free.
 
 At checkout the buyer picks **delivery** or **pickup** for each shop in their cart.
-For delivery, the buyer also selects a courier company (Platinum, Mercury, or a
-company added by an admin). Fees and the total update instantly. A delivery address
-is only required when at least one shop is delivering. The shop's terms also appear
-on its storefront, shop card and product pages.
+For delivery, the buyer also selects a courier company activated by an admin.
+Fees and the total update instantly. A delivery address is only required when at
+least one shop is delivering. The shop's terms also appear on its storefront, shop
+card and product pages.
 
-Admins create courier logins under **Admin → Delivery companies**. A courier can
-only see deliveries assigned to its company, and must submit a receipt/reference
-after the seller marks the order shipped. The receipt appears under **Admin →
-Payments → Courier delivery receipts**. Admin approval makes a protected payout
-eligible for the existing manual payout process. Courier deliveries never use the
-customer-confirmation or automatic three-day release path.
+Admins create courier logins under **Admin → Delivery companies**, then verify and
+activate each account. Only companies with an active account appear at checkout.
+Courier accounts can only see deliveries assigned to their company. After the seller
+marks an order shipped, the customer sees a time-limited delivery code in **My
+orders**. The courier must enter that code with the receipt/reference. The receipt
+appears under **Admin → Payments → Courier delivery receipts**. Admin approval
+makes a protected payout eligible for the existing manual payout process.
+Courier deliveries never use the customer-confirmation or automatic three-day
+release path. Shipments still unconfirmed after seven days appear in an admin
+exception queue; only resolve one after independently confirming receipt with the
+customer, and record the investigation in the required note.
 
 ## Verified sellers
 
@@ -178,11 +200,12 @@ is in `SHOPVERSE_ADMIN_EMAILS`.
 |---|---|---|
 | `GET /api/payment-info` | Anyone | The accounts buyers pay into, and the protection period |
 | `GET /api/couriers` | Anyone | Courier companies available at checkout |
+| `POST /api/orders/:id/shops/:shopId/delivery-code` | Customer | Issue a 30-minute delivery code after the shop marks the courier shipment shipped |
 | `POST /api/orders/:id/payment` | Customer | Submit the transaction ID (`{ transactionId }`) |
 | `POST /api/orders/:id/confirm` | Customer | Confirm receipt for non-courier deliveries (`{ shopId? }`) |
 | `POST /api/orders/:id/dispute` | Customer | Report a problem (`{ shopId, reason }`); freezes the payout |
 | `GET /api/courier/deliveries` | Courier | List shipped orders assigned to the courier's company |
-| `POST /api/courier/orders/:id/shops/:shopId/delivered` | Courier | Submit delivery receipt (`{ receiptReference }`) |
+| `POST /api/courier/orders/:id/shops/:shopId/delivered` | Active courier | Submit delivery receipt and customer code (`{ receiptReference, recipientCode }`) |
 | `POST /api/me/verification` | Shop owner | Request verification (`{ businessName, idNumber, phone, note? }`) |
 | `PATCH /api/me` | Shop owner | Also accepts `shopPhone` and `delivery: { enabled, fee, freeOver, areas, pickup }` |
 | `POST /api/orders` | Customer | Also accepts `fulfilment: { [shopId]: 'delivery' \| 'pickup' }` |
@@ -195,7 +218,9 @@ is in `SHOPVERSE_ADMIN_EMAILS`.
 | `GET /api/admin/payments` | Admin | Payment and payout work queues |
 | `GET /api/admin/couriers` | Admin | Courier companies and logins |
 | `POST /api/admin/couriers` | Admin | Create a courier login (`{ name, email, password, courierCompany }`) |
+| `PATCH /api/admin/couriers/:courierId` | Admin | Activate or disable a courier (`{ active: boolean }`) |
 | `POST /api/admin/orders/:id/shops/:shopId/delivery-approval` | Admin | Approve a courier delivery receipt |
+| `POST /api/admin/orders/:id/shops/:shopId/delivery-exception` | Admin | Resolve an overdue courier delivery after seven days (`{ note }`); records an audit event |
 | `POST /api/admin/orders/:id/payment` | Admin | `{ action: 'confirm' \| 'reject', note? }` |
 | `POST /api/admin/orders/:id/shops/:shopId/payout` | Admin | Mark a payout as sent (`{ reference? }`) |
 | `POST /api/admin/orders/:id/shops/:shopId/refund` | Admin | Mark a refund as sent |

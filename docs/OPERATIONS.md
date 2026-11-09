@@ -25,6 +25,20 @@ personal money, so every statement line belongs to an order.
 If a payment number is not set, buyers who choose that method are told ShopVerse
 will contact them with payment details.
 
+## Account sign-in and password recovery
+
+For Google sign-in, create an OAuth 2.0 **Web application** client in Google Cloud,
+add the ShopVerse production origin to its authorized JavaScript origins, and set
+`GOOGLE_CLIENT_ID` on the web service. Google sign-in is hidden until this is
+configured. New Google sign-ins create customer accounts; sellers should use the
+seller registration flow.
+
+For password recovery, create a Resend API key and verify the sender domain/address.
+Set `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, and `SHOPVERSE_PUBLIC_URL` (the canonical
+HTTPS site origin) on the web service, then redeploy. Reset links are single-use,
+expire after 30 minutes, and successful resets sign the account out on all devices.
+Requests use the same response for registered and unregistered email addresses.
+
 ## Daily routine
 
 Open **Admin → Overview**. The **Needs your attention** box lists everything
@@ -47,15 +61,24 @@ Never confirm a payment you cannot see on the statement.
 
 Create courier logins under **Admin → Delivery companies**. Add the company name
 and create a separate login for each courier staff member. Share temporary passwords
-through a secure channel. Adding a company makes it selectable by customers at
-checkout; it does not connect to that company's external system.
+through a secure channel. Verify and activate each account only after checking the
+company and staff member. Only companies with an active account are selectable by
+customers at checkout; this does not connect to that company's external system.
 
 When a courier submits a delivery receipt, open **Admin → Payments → Courier
 delivery receipts**. Match the company and receipt/reference against the courier's
-proof, then tap **Approve delivery**. This confirmation is required before a courier
-delivery's protected seller payout can become ready. Courier deliveries do not
-auto-release after three days, and customers cannot confirm them on the courier's
-behalf.
+proof, then tap **Approve delivery**. The courier must also enter the customer's
+eight-digit code, which is available in **My orders** after the seller marks the
+shipment shipped and expires after 30 minutes. This confirmation is required before
+a courier delivery's protected seller payout can become ready. Courier deliveries
+do not auto-release after three days, and customers cannot confirm them on the
+courier's behalf.
+
+Shipments without a courier receipt after seven days appear under **Overdue courier
+shipments**. Contact the customer and independently confirm they received the
+package before resolving an exception. Enter who confirmed receipt, when, and how;
+the note is retained in the delivery audit and the action can make the payout
+eligible. Do not use this exception to bypass an unresolved customer report.
 
 ### 3. Disputes (same day)
 

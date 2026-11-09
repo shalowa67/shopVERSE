@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { OAuth2Client } = require('google-auth-library');
 const { createStore } = require('./storage');
 const { createPostgresStore } = require('./postgres-storage');
 const { seedUsers, seedProducts, demoPaymentAccounts } = require('./seed');
@@ -35,6 +36,7 @@ const DEFAULT_THEME = '#4f46e5';
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const LOW_STOCK_THRESHOLD = 3;
 const MIN_PASSWORD_LENGTH = 8;
+const googleAuthClient = new OAuth2Client();
 
 // Marketplace commission taken from each seller payout (percent of item value).
 // Defaults to 0 so the marketplace is free for sellers at launch.
@@ -60,7 +62,7 @@ const ADMIN_EMAILS = String(process.env.SHOPVERSE_ADMIN_EMAILS || '')
   .filter(Boolean);
 
 const ROLES = ['customer', 'shop_owner'];
-const DEFAULT_COURIER_COMPANIES = ['Platinum', 'Mercury'];
+const COURIER_ESCALATION_MS = 7 * 24 * 60 * 60 * 1000;
 const VERIFICATION_STATUSES = ['none', 'pending', 'verified', 'rejected'];
 const ORDER_FLOW = ['pending', 'confirmed', 'packed', 'shipped', 'delivered'];
 const ORDER_STATUSES = [...ORDER_FLOW, 'cancelled'];
@@ -245,6 +247,16 @@ const registerLimiter = createRateLimiter({
   max: 20,
   message: 'Too many accounts created from this network. Please try again later.'
 });
+const passwordResetLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: 'Too many password recovery requests. Please wait and try again.'
+});
+const passwordResetEmailLimiter = createRateLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 3,
+  message: 'Too many password recovery requests for this email. Please try again later.'
+});
 
 // ---------------------------------------------------------------------------
 // State lifecycle
@@ -260,6 +272,8 @@ const resetAppState = () => {
   notifications.length = 0;
   loginLimiter.clear();
   registerLimiter.clear();
+  passwordResetLimiter.clear();
+  passwordResetEmailLimiter.clear();
 
   if (demoDataEnabled) {
     seedUsers.forEach((user) => users.push({ ...structuredClone(user), password: hashPassword(user.password) }));
@@ -453,7 +467,10 @@ const sanitizeUser = (user) => {
       }
     });
   }
-  if (user.role === 'courier') result.courierCompany = user.courierCompany;
+  if (user.role === 'courier') {
+    result.courierCompany = user.courierCompany;
+    result.courierActive = Boolean(user.courierActive);
+  }
   return result;
 };
 
@@ -605,6 +622,10 @@ const serializeCustomerOrder = (order) => {
   const payment = order.payment || {};
   return {
     ...order,
+    fulfilment: Object.fromEntries(Object.entries(order.fulfilment || {}).map(([shopId, entry]) => {
+      const { deliveryCodeHash, deliveryCodeExpiresAt, ...customerEntry } = entry;
+      return [shopId, customerEntry];
+    })),
     status,
     paymentInstructions: paymentInstructions(order),
     canCancel: Object.values(order.shopStatuses).every((entry) => entry === 'pending' || entry === 'cancelled') && status !== 'cancelled',
@@ -685,6 +706,11 @@ const createNotification = (userId, type, message) => {
   return notification;
 };
 
+const recordDeliveryAudit = (fulfilment, action, actorId, details = {}) => {
+  if (!Array.isArray(fulfilment.deliveryAudit)) fulfilment.deliveryAudit = [];
+  fulfilment.deliveryAudit.push({ action, actorId, at: nowIso(), ...details });
+};
+
 const restockItems = (items) => {
   items.forEach((item) => {
     const product = getProductById(item.productId);
@@ -760,8 +786,10 @@ app.use((req, res, next) => {
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-    "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https: http:; connect-src 'self'; " +
+    "default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client https://accounts.google.com/gsi/; " +
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; " +
+    "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https: http:; " +
+    "connect-src 'self' https://accounts.google.com/gsi/; frame-src https://accounts.google.com/gsi/; " +
     "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
   );
   if (isProduction) res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
@@ -1078,6 +1106,162 @@ app.post('/api/login', asyncRoute(async (req, res) => {
   const token = createSession(user);
   await persistAppState();
   res.json({ success: true, token, user: sanitizeUser(user) });
+}));
+
+app.get('/api/auth/config', (req, res) => {
+  res.json({ success: true, googleClientId: String(process.env.GOOGLE_CLIENT_ID || '').trim() || null });
+});
+
+app.post('/api/auth/google', asyncRoute(async (req, res) => {
+  const clientId = String(process.env.GOOGLE_CLIENT_ID || '').trim();
+  if (!clientId) fail(503, 'Google sign-in is not configured.');
+  const credential = String((req.body || {}).credential || '');
+  if (!credential || credential.length > 12000) fail(400, 'A valid Google credential is required.');
+
+  loginLimiter.check(req.ip);
+  let payload;
+  try {
+    const ticket = await googleAuthClient.verifyIdToken({ idToken: credential, audience: clientId });
+    payload = ticket.getPayload();
+  } catch (error) {
+    console.warn('Google ID token verification failed:', error.name);
+    loginLimiter.hit(req.ip);
+    if (['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN'].includes(error.code) ||
+        (error.response && error.response.status >= 500)) {
+      fail(503, 'Google sign-in is temporarily unavailable. Please try again.');
+    }
+    fail(401, 'Google sign-in could not be verified.');
+  }
+  if (!payload || !payload.sub || !payload.email || payload.email_verified !== true) {
+    loginLimiter.hit(req.ip);
+    fail(401, 'Use a Google account with a verified email address.');
+  }
+
+  const email = normalizeEmail(payload.email);
+  if (!isValidEmail(email)) {
+    loginLimiter.hit(req.ip);
+    fail(401, 'This Google account could not be signed in.');
+  }
+  let user = getUserByEmail(email);
+  if (user && (isDemoAccountBlocked(user) || (user.googleSub && user.googleSub !== payload.sub))) {
+    loginLimiter.hit(req.ip);
+    fail(401, 'This Google account could not be signed in.');
+  }
+  if (!user) {
+    user = {
+      id: crypto.randomUUID(),
+      name: text(payload.name || email.split('@')[0], { field: 'Name', max: 80, required: true }),
+      email,
+      password: null,
+      role: 'customer',
+      googleSub: payload.sub,
+      googleEmailVerifiedAt: nowIso(),
+      createdAt: nowIso()
+    };
+    users.push(user);
+  } else if (!user.googleSub) {
+    user.googleSub = payload.sub;
+    user.googleEmailVerifiedAt = nowIso();
+  }
+
+  loginLimiter.reset(req.ip);
+  const token = createSession(user);
+  await persistAppState();
+  res.json({ success: true, token, user: sanitizeUser(user) });
+}));
+
+const passwordResetConfig = () => {
+  const apiKey = String(process.env.RESEND_API_KEY || '').trim();
+  const from = String(process.env.RESEND_FROM_EMAIL || '').trim();
+  const publicUrl = String(process.env.SHOPVERSE_PUBLIC_URL || '').trim();
+  if (!apiKey || !from || !publicUrl) fail(503, 'Password recovery is not configured. Please contact ShopVerse support.');
+
+  let base;
+  try {
+    base = new URL(publicUrl);
+  } catch (error) {
+    fail(503, 'Password recovery is not configured. Please contact ShopVerse support.');
+  }
+  if (!['https:', 'http:'].includes(base.protocol) ||
+      (isProduction && base.protocol !== 'https:') || base.username || base.password) {
+    fail(503, 'Password recovery is not configured. Please contact ShopVerse support.');
+  }
+  return { apiKey, from, base };
+};
+
+const sendPasswordResetEmail = async (email, token, config) => {
+  const link = new URL('/reset-password', config.base);
+  link.searchParams.set('token', token);
+  let response;
+  try {
+    response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from: config.from,
+        to: [email],
+        subject: 'Reset your ShopVerse password',
+        text: `Use this one-time link to reset your ShopVerse password. It expires in 30 minutes: ${link.href}`,
+        html: `<p>We received a request to reset your ShopVerse password.</p><p><a href="${escapeAttr(link.href)}">Reset your password</a></p><p>This one-time link expires in 30 minutes. If you did not request a reset, you can ignore this email.</p>`
+      }),
+      signal: AbortSignal.timeout(10000)
+    });
+  } catch (error) {
+    console.error('Password-reset email delivery failed:', error.message);
+    fail(503, 'Password recovery email could not be sent. Please try again later.');
+  }
+  if (!response.ok) {
+    console.error('Resend rejected a password-reset email with status', response.status);
+    fail(503, 'Password recovery email could not be sent. Please try again later.');
+  }
+};
+
+app.post('/api/forgot-password', asyncRoute(async (req, res) => {
+  passwordResetLimiter.check(req.ip);
+  passwordResetLimiter.hit(req.ip);
+  const email = normalizeEmail((req.body || {}).email);
+  if (!isValidEmail(email)) fail(400, 'Please enter a valid email address.');
+  passwordResetEmailLimiter.check(email);
+  passwordResetEmailLimiter.hit(email);
+  const config = passwordResetConfig();
+  const user = getUserByEmail(email);
+
+  if (user && !isDemoAccountBlocked(user)) {
+    const token = crypto.randomBytes(32).toString('hex');
+    user.passwordResetTokenHash = sha256(token);
+    user.passwordResetExpiresAt = Date.now() + 30 * 60 * 1000;
+    await persistAppState();
+    await sendPasswordResetEmail(email, token, config);
+  }
+  res.json({
+    success: true,
+    message: 'If an account exists for that email, a password reset link will be sent shortly.'
+  });
+}));
+
+app.post('/api/reset-password', asyncRoute(async (req, res) => {
+  const body = req.body || {};
+  const token = String(body.token || '');
+  if (!/^[a-f0-9]{64}$/i.test(token)) fail(400, 'This password reset link is invalid or has expired.');
+  const tokenHash = sha256(token);
+  const user = users.find((entry) => {
+    if (!entry.passwordResetTokenHash || !Number.isFinite(entry.passwordResetExpiresAt) ||
+        entry.passwordResetExpiresAt <= Date.now()) return false;
+    const expected = Buffer.from(entry.passwordResetTokenHash, 'hex');
+    const actual = Buffer.from(tokenHash, 'hex');
+    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+  });
+  if (!user) fail(400, 'This password reset link is invalid or has expired.');
+
+  user.password = hashPassword(validatePassword(body.newPassword));
+  delete user.passwordResetTokenHash;
+  delete user.passwordResetExpiresAt;
+  for (const [hash, session] of sessions) if (session.userId === user.id) sessions.delete(hash);
+  await persistAppState();
+  res.json({ success: true, message: 'Your password has been reset. Please sign in with your new password.' });
 }));
 
 app.post('/api/logout', authMiddleware, asyncRoute(async (req, res) => {
@@ -1455,7 +1639,10 @@ app.post('/api/orders', ...customerOnly('Only customers can place orders.'), asy
     if (entry.method === 'delivery') {
       const courierCompany = text(requestedMethods[shopId] && requestedMethods[shopId].courierCompany, { field: 'Courier company', max: 80 });
       if (courierCompany && !getCourierCompanies().includes(courierCompany)) fail(400, 'Please choose an available delivery company.');
-      if (courierCompany) entry.courierCompany = courierCompany;
+      if (courierCompany) {
+        entry.courierCompany = courierCompany;
+        recordDeliveryAudit(entry, 'courier_assigned', req.user.id, { courierCompany });
+      }
     }
     delete entry.itemsSubtotal;
   });
@@ -1569,10 +1756,24 @@ const findCustomerOrder = (req) => {
   return order;
 };
 
-const getCourierCompanies = () => [...new Set([
-  ...DEFAULT_COURIER_COMPANIES,
-  ...users.filter((user) => user.role === 'courier').map((user) => user.courierCompany)
-])].sort((a, b) => a.localeCompare(b));
+app.post('/api/orders/:orderId/shops/:shopId/delivery-code', ...customerOnly('Only customers can request their delivery code.'), asyncRoute(async (req, res) => {
+  const order = findCustomerOrder(req);
+  const fulfilment = requireShopInOrder(order, req.params.shopId);
+  if (!fulfilment.courierCompany) fail(400, 'This order does not use a courier delivery.');
+  if (order.shopStatuses[req.params.shopId] === 'cancelled' || fulfilment.courierDeliveredAt) fail(409, 'A delivery code is not available for this order.');
+  if (order.shopStatuses[req.params.shopId] !== 'shipped') fail(409, 'A delivery code is available after the seller marks the order shipped.');
+
+  const deliveryCode = String(crypto.randomInt(10000000, 100000000));
+  fulfilment.deliveryCodeHash = sha256(deliveryCode);
+  fulfilment.deliveryCodeExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+  order.updatedAt = nowIso();
+  await persistAppState();
+  res.json({ success: true, deliveryCode, expiresAt: fulfilment.deliveryCodeExpiresAt });
+}));
+
+const getCourierCompanies = () => [...new Set(
+  users.filter((user) => user.role === 'courier' && user.courierActive).map((user) => user.courierCompany)
+)].sort((a, b) => a.localeCompare(b));
 
 app.get('/api/couriers', (req, res) => {
   res.json({ success: true, companies: getCourierCompanies() });
@@ -1678,6 +1879,10 @@ app.patch('/api/orders/:orderId/status', authMiddleware,
       order.shopStatuses[req.user.id] = status;
       if (status === 'cancelled') restockItems(order.items.filter((item) => item.shopId === req.user.id));
       if (status === 'delivered') fulfilment.deliveredAt = nowIso();
+      if (status === 'shipped') {
+        fulfilment.shippedAt = fulfilment.shippedAt || nowIso();
+        if (fulfilment.courierCompany) recordDeliveryAudit(fulfilment, 'seller_shipped', req.user.id);
+      }
       order.status = deriveOrderStatus(order);
       order.updatedAt = nowIso();
 
@@ -1786,7 +1991,13 @@ app.get('/api/dashboard', authMiddleware, (req, res) => {
 // ---------------------------------------------------------------------------
 
 const adminOnly = [authMiddleware, requireAdmin];
-const courierOnly = [authMiddleware, requireRole('courier', 'Only registered delivery companies can confirm delivery.')];
+const courierOnly = [
+  authMiddleware,
+  requireRole('courier', 'Only registered delivery companies can confirm delivery.'),
+  (req, res, next) => req.user.courierActive
+    ? next()
+    : res.status(403).json({ success: false, message: 'This courier account is awaiting activation or has been disabled.' })
+];
 
 const adminOrderEntry = (order, shopId = null) => {
   const entry = {
@@ -1820,7 +2031,9 @@ const adminOrderEntry = (order, shopId = null) => {
       courierCompany: fulfilment.courierCompany || null,
       courierDeliveredAt: fulfilment.courierDeliveredAt || null,
       courierReceiptReference: fulfilment.courierReceiptReference || null,
-      adminDeliveryApprovedAt: fulfilment.adminDeliveryApprovedAt || null
+      adminDeliveryApprovedAt: fulfilment.adminDeliveryApprovedAt || null,
+      adminDeliveryOverrideAt: fulfilment.adminDeliveryOverrideAt || null,
+      deliveryAudit: fulfilment.deliveryAudit || []
     });
   }
   return entry;
@@ -1841,7 +2054,8 @@ app.get('/api/admin/couriers', ...adminOnly, (req, res) => {
     id: user.id,
     name: user.name,
     email: user.email,
-    courierCompany: user.courierCompany
+    courierCompany: user.courierCompany,
+    courierActive: Boolean(user.courierActive)
   }));
   res.json({ success: true, companies: getCourierCompanies(), couriers });
 });
@@ -1862,11 +2076,25 @@ app.post('/api/admin/couriers', ...adminOnly, asyncRoute(async (req, res) => {
     password: hashPassword(password),
     role: 'courier',
     courierCompany,
+    courierActive: false,
     createdAt: nowIso()
   };
   users.push(courier);
   await persistAppState();
   res.status(201).json({ success: true, courier: sanitizeUser(courier) });
+}));
+
+app.patch('/api/admin/couriers/:courierId', ...adminOnly, asyncRoute(async (req, res) => {
+  const courier = users.find((user) => user.id === req.params.courierId && user.role === 'courier');
+  if (!courier) fail(404, 'Courier account not found.');
+  const active = (req.body || {}).active;
+  if (typeof active !== 'boolean') fail(400, 'Active must be true or false.');
+  courier.courierActive = active;
+  if (!active) {
+    for (const [hash, session] of sessions) if (session.userId === courier.id) sessions.delete(hash);
+  }
+  await persistAppState();
+  res.json({ success: true, courier: sanitizeUser(courier) });
 }));
 
 app.get('/api/admin/sellers', ...adminOnly, (req, res) => {
@@ -1996,6 +2224,15 @@ app.get('/api/admin/payments', ...adminOnly, (req, res) => {
       deliveryConfirmations.push(adminOrderEntry(order, shopId));
     }
   }));
+  const deliveryEscalations = [];
+  orders.forEach((order) => Object.keys(order.shopStatuses).forEach((shopId) => {
+    const fulfilment = order.fulfilment[shopId] || {};
+    const overdue = fulfilment.shippedAt && Date.now() - new Date(fulfilment.shippedAt).getTime() >= COURIER_ESCALATION_MS;
+    if (fulfilment.courierCompany && overdue && !fulfilment.courierDeliveredAt && !fulfilment.adminDeliveryOverrideAt &&
+      !(fulfilment.dispute && !fulfilment.dispute.resolvedAt) && market.payoutState(order, shopId) === 'held') {
+      deliveryEscalations.push(adminOrderEntry(order, shopId));
+    }
+  }));
 
   res.json({
     success: true,
@@ -2005,7 +2242,8 @@ app.get('/api/admin/payments', ...adminOnly, (req, res) => {
     refunds: byState.refund_due.sort(newestFirst),
     disputes: byState.on_hold.sort(newestFirst),
     held: byState.held.sort(newestFirst),
-    deliveryConfirmations: deliveryConfirmations.sort(newestFirst)
+    deliveryConfirmations: deliveryConfirmations.sort(newestFirst),
+    deliveryEscalations: deliveryEscalations.sort(newestFirst)
   });
 });
 
@@ -2039,8 +2277,17 @@ app.post('/api/courier/orders/:orderId/shops/:shopId/delivered', ...courierOnly,
   if (fulfilment.dispute && !fulfilment.dispute.resolvedAt) fail(409, 'This order is on hold while ShopVerse reviews a customer report.');
 
   const receiptReference = text((req.body || {}).receiptReference, { field: 'Courier receipt/reference', max: 80, required: true });
+  const recipientCode = String((req.body || {}).recipientCode || '').trim();
+  if (!/^\d{8}$/.test(recipientCode)) fail(400, 'Enter the customer delivery code shown in their ShopVerse order.');
+  if (!fulfilment.deliveryCodeHash || !fulfilment.deliveryCodeExpiresAt || Date.now() > new Date(fulfilment.deliveryCodeExpiresAt).getTime()) {
+    fail(409, 'The customer delivery code has expired. Ask the customer to refresh it in ShopVerse.');
+  }
+  const actualHash = Buffer.from(sha256(recipientCode), 'hex');
+  const expectedHash = Buffer.from(fulfilment.deliveryCodeHash, 'hex');
+  if (!crypto.timingSafeEqual(actualHash, expectedHash)) fail(403, 'The customer delivery code does not match. Do not mark this package delivered.');
   fulfilment.courierDeliveredAt = nowIso();
   fulfilment.courierReceiptReference = receiptReference;
+  recordDeliveryAudit(fulfilment, 'courier_reported_delivery', req.user.id, { receiptReference });
   fulfilment.deliveredAt = fulfilment.courierDeliveredAt;
   order.shopStatuses[req.params.shopId] = 'delivered';
   order.status = deriveOrderStatus(order);
@@ -2060,9 +2307,36 @@ app.post('/api/admin/orders/:orderId/shops/:shopId/delivery-approval', ...adminO
 
   fulfilment.adminDeliveryApprovedAt = nowIso();
   fulfilment.adminDeliveryApprovedBy = req.user.id;
+  recordDeliveryAudit(fulfilment, 'admin_approved_courier_receipt', req.user.id, { receiptReference: fulfilment.courierReceiptReference });
   createNotification(order.customerId, 'status', `ShopVerse verified the ${fulfilment.courierCompany} delivery receipt for order #${shortId(order.id)}.`);
   const shop = getShopById(req.params.shopId);
   if (shop) createNotification(shop.id, 'sale', `ShopVerse approved the ${fulfilment.courierCompany} delivery receipt for order #${shortId(order.id)}. Payout is ready.`);
+  await persistAppState();
+  res.json({ success: true, entry: adminOrderEntry(order, req.params.shopId) });
+}));
+
+app.post('/api/admin/orders/:orderId/shops/:shopId/delivery-exception', ...adminOnly, asyncRoute(async (req, res) => {
+  const order = findOrder(req.params.orderId);
+  const fulfilment = requireShopInOrder(order, req.params.shopId);
+  const shippedAt = fulfilment.shippedAt && new Date(fulfilment.shippedAt).getTime();
+  if (!fulfilment.courierCompany || order.shopStatuses[req.params.shopId] !== 'shipped' || !shippedAt ||
+      Date.now() - shippedAt < COURIER_ESCALATION_MS) fail(409, 'This courier delivery is not eligible for overdue review yet.');
+  if (fulfilment.courierDeliveredAt || fulfilment.adminDeliveryOverrideAt) fail(409, 'This delivery already has a courier report or admin resolution.');
+  if (market.payoutState(order, req.params.shopId) !== 'held') fail(409, 'This delivery does not have a protected payout on hold.');
+  if (fulfilment.dispute && !fulfilment.dispute.resolvedAt) fail(409, 'Resolve the open customer report before handling this delivery.');
+
+  const note = text((req.body || {}).note, { field: 'Resolution note', max: 500, required: true });
+  fulfilment.adminDeliveryOverrideAt = nowIso();
+  fulfilment.adminDeliveryOverrideBy = req.user.id;
+  fulfilment.adminDeliveryOverrideNote = note;
+  fulfilment.deliveredAt = fulfilment.adminDeliveryOverrideAt;
+  order.shopStatuses[req.params.shopId] = 'delivered';
+  order.status = deriveOrderStatus(order);
+  recordDeliveryAudit(fulfilment, 'admin_overdue_delivery_exception', req.user.id, { note });
+  order.updatedAt = nowIso();
+  createNotification(order.customerId, 'status', `ShopVerse reviewed the overdue courier delivery for order #${shortId(order.id)}.${note ? ` ${note}` : ''}`);
+  const shop = getShopById(req.params.shopId);
+  if (shop) createNotification(shop.id, 'sale', `ShopVerse resolved the overdue courier delivery for order #${shortId(order.id)}. Review the delivery audit before payout.`);
   await persistAppState();
   res.json({ success: true, entry: adminOrderEntry(order, req.params.shopId) });
 }));

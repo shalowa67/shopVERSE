@@ -190,6 +190,104 @@ test('password change requires the current password and signs out other sessions
   assert.equal((await api('/api/me', { token: second })).status, 401, 'other sessions are revoked');
 });
 
+test('password recovery emails a single-use token and revokes sessions after reset', async () => {
+  const savedEnv = {
+    RESEND_API_KEY: process.env.RESEND_API_KEY,
+    RESEND_FROM_EMAIL: process.env.RESEND_FROM_EMAIL,
+    SHOPVERSE_PUBLIC_URL: process.env.SHOPVERSE_PUBLIC_URL
+  };
+  const originalFetch = global.fetch;
+  let emailPayload;
+  process.env.RESEND_API_KEY = 'test-resend-key';
+  process.env.RESEND_FROM_EMAIL = 'ShopVerse <accounts@example.com>';
+  process.env.SHOPVERSE_PUBLIC_URL = 'https://shopverse.example';
+  global.fetch = async (input, options) => {
+    if (String(input) === 'https://api.resend.com/emails') {
+      emailPayload = JSON.parse(options.body);
+      return new Response(JSON.stringify({ id: 'test-email' }), { status: 200 });
+    }
+    return originalFetch(input, options);
+  };
+
+  try {
+    const registered = await api('/api/register', {
+      method: 'POST',
+      body: { name: 'Password Recovery', email: 'recovery@example.com', password: 'old-password', role: 'customer' }
+    });
+    assert.equal(registered.status, 201);
+    const firstSession = registered.data.token;
+
+    const known = await api('/api/forgot-password', {
+      method: 'POST', body: { email: 'recovery@example.com' }
+    });
+    const unknown = await api('/api/forgot-password', {
+      method: 'POST', body: { email: 'unknown@example.com' }
+    });
+    assert.equal(known.status, 200);
+    assert.deepEqual(known.data, unknown.data, 'responses must not disclose whether the email is registered');
+    assert.equal(Object.hasOwn(known.data, 'token'), false);
+    assert.equal(emailPayload.to[0], 'recovery@example.com');
+    const account = await api('/api/me', { token: firstSession });
+    assert.equal(Object.hasOwn(account.data.user, 'passwordResetTokenHash'), false);
+    assert.equal(Object.hasOwn(account.data.user, 'passwordResetExpiresAt'), false);
+
+    const resetLink = /reset-password\?token=([a-f0-9]{64})/.exec(emailPayload.text);
+    assert.ok(resetLink, 'the email contains the reset token link');
+    const invalidToken = `${resetLink[1][0] === '0' ? '1' : '0'}${resetLink[1].slice(1)}`;
+    const invalid = await api('/api/reset-password', {
+      method: 'POST', body: { token: invalidToken, newPassword: 'new-password' }
+    });
+    assert.equal(invalid.status, 400);
+
+    const reset = await api('/api/reset-password', {
+      method: 'POST', body: { token: resetLink[1], newPassword: 'new-password' }
+    });
+    assert.equal(reset.status, 200);
+    assert.equal((await api('/api/reset-password', {
+      method: 'POST', body: { token: resetLink[1], newPassword: 'another-password' }
+    })).status, 400, 'reset tokens are single-use');
+    assert.equal((await api('/api/me', { token: firstSession })).status, 401, 'reset revokes existing sessions');
+    assert.equal((await api('/api/login', {
+      method: 'POST', body: { email: 'recovery@example.com', password: 'old-password' }
+    })).status, 401);
+    assert.equal((await api('/api/login', {
+      method: 'POST', body: { email: 'recovery@example.com', password: 'new-password' }
+    })).status, 200);
+  } finally {
+    global.fetch = originalFetch;
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test('Google sign-in requires server-side ID token verification and reports configuration', async () => {
+  const oldClientId = process.env.GOOGLE_CLIENT_ID;
+  try {
+    delete process.env.GOOGLE_CLIENT_ID;
+    assert.equal((await api('/api/auth/config')).data.googleClientId, null);
+    assert.equal((await api('/api/auth/google', {
+      method: 'POST', body: { credential: 'untrusted-token' }
+    })).status, 503);
+
+    process.env.GOOGLE_CLIENT_ID = 'shopverse-test-client';
+    const config = await api('/api/auth/config');
+    assert.equal(config.data.googleClientId, 'shopverse-test-client');
+    const loginPage = await fetch(`${baseUrl}/login`);
+    const policy = loginPage.headers.get('content-security-policy');
+    assert.match(policy, /accounts\.google\.com\/gsi\/client/);
+    assert.match(policy, /frame-src https:\/\/accounts\.google\.com\/gsi\//);
+    const invalid = await api('/api/auth/google', {
+      method: 'POST', body: { credential: 'not-a-valid-google-id-token' }
+    });
+    assert.equal(invalid.status, 401);
+  } finally {
+    if (oldClientId === undefined) delete process.env.GOOGLE_CLIENT_ID;
+    else process.env.GOOGLE_CLIENT_ID = oldClientId;
+  }
+});
+
 test('repeated failed logins are rate limited', async () => {
   let last;
   for (let attempt = 0; attempt < 11; attempt += 1) {

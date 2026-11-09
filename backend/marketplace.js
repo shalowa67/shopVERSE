@@ -121,7 +121,8 @@ const payoutState = (order, shopId, now = Date.now()) => {
   if (fulfilment.dispute && !fulfilment.dispute.resolvedAt) return 'on_hold';
   if (fulfilment.courierCompany) {
     const disputeReleased = fulfilment.dispute && fulfilment.dispute.resolution === 'release';
-    return disputeReleased || (fulfilment.courierDeliveredAt && fulfilment.adminDeliveryApprovedAt) ? 'ready' : 'held';
+    return disputeReleased || fulfilment.adminDeliveryOverrideAt ||
+      (fulfilment.courierDeliveredAt && fulfilment.adminDeliveryApprovedAt) ? 'ready' : 'held';
   }
   if (status === 'delivered') {
     const confirmed = Boolean(fulfilment.confirmedAt) ||

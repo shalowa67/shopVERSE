@@ -189,6 +189,8 @@ test('courier deliveries require courier verification and admin approval before 
 
 test('assigned courier confirms delivery and admin approval is required before payout', async () => {
   const { customer, owner, admin } = await tokens();
+  const unavailableCompanies = await api('/api/couriers');
+  assert.deepEqual(unavailableCompanies.data.companies, []);
   const createCourier = async (name, email, courierCompany) => {
     const created = await api('/api/admin/couriers', {
       method: 'POST',
@@ -196,6 +198,10 @@ test('assigned courier confirms delivery and admin approval is required before p
       body: { name, email, password: 'courier-password', courierCompany }
     });
     assert.equal(created.status, 201);
+    const activated = await api(`/api/admin/couriers/${created.data.courier.id}`, {
+      method: 'PATCH', token: admin, body: { active: true }
+    });
+    assert.equal(activated.status, 200);
     return login(email, 'courier-password');
   };
   const platinum = await createCourier('Platinum Agent', 'platinum-agent@example.com', 'Platinum');
@@ -210,6 +216,7 @@ test('assigned courier confirms delivery and admin approval is required before p
   assert.equal(order.fulfillments[0].courierCompany, 'Platinum');
   await api(`/api/admin/orders/${order.id}/payment`, { method: 'POST', token: admin, body: { action: 'confirm' } });
   assert.equal((await api(`/api/orders/${order.id}/status`, { method: 'PATCH', token: owner, body: { status: 'delivered' } })).status, 403);
+  assert.equal((await api(`/api/orders/${order.id}/shops/shop-owner-demo/delivery-code`, { method: 'POST', token: customer })).status, 409);
   assert.equal((await api(`/api/orders/${order.id}/status`, { method: 'PATCH', token: owner, body: { status: 'shipped' } })).status, 200);
 
   const wrongCourierDeliveries = await api('/api/courier/deliveries', { token: mercury });
@@ -221,8 +228,18 @@ test('assigned courier confirms delivery and admin approval is required before p
 
   const assignedDeliveries = await api('/api/courier/deliveries', { token: platinum });
   assert.ok(assignedDeliveries.data.deliveries.some((entry) => entry.orderId === order.id));
+  assert.equal(Object.hasOwn(assignedDeliveries.data.deliveries.find((entry) => entry.orderId === order.id), 'deliveryCode'), false);
+  assert.equal(Object.hasOwn(order.fulfilment['shop-owner-demo'], 'deliveryCodeHash'), false);
+  const codeResponse = await api(`/api/orders/${order.id}/shops/shop-owner-demo/delivery-code`, { method: 'POST', token: customer });
+  assert.equal(codeResponse.status, 200);
+  const deliveryCode = codeResponse.data.deliveryCode;
+  assert.match(deliveryCode, /^\d{8}$/);
+  const wrongCode = await api(`/api/courier/orders/${order.id}/shops/shop-owner-demo/delivered`, {
+    method: 'POST', token: platinum, body: { receiptReference: 'PLT-RECEIPT-001', recipientCode: '00000000' }
+  });
+  assert.equal(wrongCode.status, 403);
   const courierReceipt = await api(`/api/courier/orders/${order.id}/shops/shop-owner-demo/delivered`, {
-    method: 'POST', token: platinum, body: { receiptReference: 'PLT-RECEIPT-001' }
+    method: 'POST', token: platinum, body: { receiptReference: 'PLT-RECEIPT-001', recipientCode: deliveryCode }
   });
   assert.equal(courierReceipt.status, 200);
   assert.equal((await api(`/api/orders/${order.id}/confirm`, { method: 'POST', token: customer, body: {} })).status, 403);
@@ -236,6 +253,42 @@ test('assigned courier confirms delivery and admin approval is required before p
   assert.equal(approved.status, 200);
   const payout = await api(`/api/admin/orders/${order.id}/shops/shop-owner-demo/payout`, { method: 'POST', token: admin, body: { reference: 'SELLER-MOMO-001' } });
   assert.equal(payout.status, 200);
+
+  const courierAccounts = await api('/api/admin/couriers', { token: admin });
+  const mercuryAccount = courierAccounts.data.couriers.find((entry) => entry.email === 'mercury-agent@example.com');
+  const disabledAccount = await api(`/api/admin/couriers/${mercuryAccount.id}`, { method: 'PATCH', token: admin, body: { active: false } });
+  assert.equal(disabledAccount.status, 200);
+  assert.equal((await api('/api/courier/deliveries', { token: mercury })).status, 401, 'disabling a courier revokes existing sessions');
+  assert.deepEqual((await api('/api/couriers')).data.companies, ['Platinum']);
+});
+
+test('overdue courier delivery can be resolved only by an admin with an audited reason', async () => {
+  const { customer, owner, admin } = await tokens();
+  const created = await api('/api/admin/couriers', {
+    method: 'POST', token: admin,
+    body: { name: 'Platinum Agent', email: 'platinum-overdue@example.com', password: 'courier-password', courierCompany: 'Platinum' }
+  });
+  assert.equal(created.status, 201);
+  await api(`/api/admin/couriers/${created.data.courier.id}`, { method: 'PATCH', token: admin, body: { active: true } });
+  const order = await placeOrder(customer, [['prod-1', 1]], {
+    fulfilment: { 'shop-owner-demo': { method: 'delivery', courierCompany: 'Platinum' } }
+  });
+  await api(`/api/admin/orders/${order.id}/payment`, { method: 'POST', token: admin, body: { action: 'confirm' } });
+  await api(`/api/orders/${order.id}/status`, { method: 'PATCH', token: owner, body: { status: 'shipped' } });
+
+  const stored = orders.find((entry) => entry.id === order.id);
+  stored.fulfilment['shop-owner-demo'].shippedAt = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+  const queue = await api('/api/admin/payments', { token: admin });
+  assert.ok(queue.data.deliveryEscalations.some((entry) => entry.orderId === order.id));
+
+  const noReason = await api(`/api/admin/orders/${order.id}/shops/shop-owner-demo/delivery-exception`, { method: 'POST', token: admin, body: {} });
+  assert.equal(noReason.status, 400);
+  const resolved = await api(`/api/admin/orders/${order.id}/shops/shop-owner-demo/delivery-exception`, {
+    method: 'POST', token: admin, body: { note: 'Called customer; recipient confirmed delivery yesterday.' }
+  });
+  assert.equal(resolved.status, 200);
+  assert.equal(resolved.data.entry.payoutState, 'ready');
+  assert.ok(resolved.data.entry.deliveryAudit.some((event) => event.action === 'admin_overdue_delivery_exception' && event.note));
 });
 
 test('a reported problem freezes the payout until an admin resolves it', async () => {

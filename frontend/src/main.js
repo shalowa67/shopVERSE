@@ -42,7 +42,7 @@ const PAYMENT_LABELS = Object.fromEntries(
     ])
 );
 const PROTECTION_DAYS = 3;
-const DEFAULT_COURIER_COMPANIES = ['Platinum', 'Mercury'];
+const DEFAULT_COURIER_COMPANIES = [];
 
 const PAYOUT_LABELS = {
   awaiting_payment: { label: 'Waiting for payment', tone: 'warning', hint: "Don't ship yet: the customer hasn't paid." },
@@ -877,6 +877,8 @@ const routes = [
   [/^\/shops\/([^/]+)$/, viewShop],
   [/^\/login\/?$/, (ctx) => viewAuth('login', ctx)],
   [/^\/register\/?$/, (ctx) => viewAuth('register', ctx)],
+  [/^\/forgot-password\/?$/, viewForgotPassword],
+  [/^\/reset-password\/?$/, viewResetPassword],
   [/^\/checkout\/?$/, viewCheckout],
   [/^\/orders\/?$/, viewOrders],
   [/^\/studio\/?$/, viewStudio],
@@ -1471,6 +1473,11 @@ async function viewAuth(mode, { query }) {
               </div>` : ''}
             <button type="submit" class="button button-primary button-lg button-block">${isRegister ? 'Create account' : 'Sign in'}</button>
           </form>
+          <div class="google-auth" id="googleAuthSection" ${isRegister && role === 'shop_owner' ? 'hidden' : ''}>
+            <div class="auth-divider"><span>or</span></div>
+            <div id="googleButton"></div>
+            <div class="form-error" id="googleAuthError" hidden></div>
+          </div>
           ${!isRegister && state.demo ? `
             <div class="demo-box">
               <strong>Demo mode.</strong> Try ShopVerse with a sample account:
@@ -1480,6 +1487,120 @@ async function viewAuth(mode, { query }) {
               </div>
             </div>` : ''}
           <p class="auth-switch">${isRegister ? 'Already have an account? <a class="link" href="/login">Sign in</a>' : 'New to ShopVerse? <a class="link" href="/register">Create a free account</a>'}</p>
+          ${!isRegister ? '<p class="auth-switch"><a class="link" href="/forgot-password">Forgot your password?</a></p>' : ''}
+        </div>
+      </div>
+    </div>`);
+  setupGoogleSignIn();
+}
+
+let googleScriptPromise;
+
+const loadGoogleIdentityServices = () => {
+  if (window.google && window.google.accounts) return Promise.resolve();
+  if (!googleScriptPromise) {
+    googleScriptPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.onload = resolve;
+      script.onerror = () => {
+        googleScriptPromise = null;
+        reject(new Error('Google sign-in could not load. Check your connection and try again.'));
+      };
+      document.head.appendChild(script);
+    });
+  }
+  return googleScriptPromise;
+};
+
+async function setupGoogleSignIn() {
+  const section = $('#googleAuthSection');
+  if (!section) return;
+  try {
+    const config = await apiRequest('/api/auth/config');
+    if (!config.googleClientId) {
+      section.hidden = true;
+      return;
+    }
+    await loadGoogleIdentityServices();
+    if (!section.isConnected) return;
+    window.google.accounts.id.initialize({
+      client_id: config.googleClientId,
+      callback: async ({ credential }) => {
+        const errorBox = $('#googleAuthError');
+        if (!errorBox) return;
+        errorBox.hidden = true;
+        try {
+          const result = await apiRequest('/api/auth/google', { method: 'POST', body: { credential } });
+          await completeSignIn(result);
+        } catch (error) {
+          errorBox.textContent = error.message;
+          errorBox.hidden = false;
+        }
+      }
+    });
+    const googleButton = $('#googleButton');
+    window.google.accounts.id.renderButton(googleButton, {
+      theme: 'outline',
+      size: 'large',
+      text: 'continue_with',
+      shape: 'rectangular',
+      width: Math.min(320, googleButton.clientWidth || 320)
+    });
+  } catch (error) {
+    const errorBox = $('#googleAuthError');
+    if (errorBox) {
+      errorBox.textContent = error.message;
+      errorBox.hidden = false;
+    }
+  }
+}
+
+async function viewForgotPassword() {
+  if (state.user) {
+    navigate(homePathFor(state.user), { replace: true });
+    return;
+  }
+  setTitle('Forgot password');
+  setView(`
+    <div class="auth-layout">
+      <div class="auth-main">
+        <div class="auth-card fade-up">
+          <h1>Forgot your password?</h1>
+          <p>Enter the email address on your account and we’ll send you a reset link if it’s registered.</p>
+          <form class="form-grid" data-form="forgot-password" novalidate>
+            <div class="form-error" id="forgotPasswordError" hidden></div>
+            <div class="notice notice-success" id="forgotPasswordNotice" hidden></div>
+            <label class="field"><span>Email</span><input type="email" name="email" autocomplete="email" placeholder="you@example.com" required /></label>
+            <button type="submit" class="button button-primary button-lg button-block">Send reset link</button>
+          </form>
+          <p class="auth-switch"><a class="link" href="/login">Back to sign in</a></p>
+        </div>
+      </div>
+    </div>`);
+}
+
+async function viewResetPassword({ query }) {
+  if (state.user) {
+    navigate(homePathFor(state.user), { replace: true });
+    return;
+  }
+  setTitle('Reset password');
+  const token = query.get('token') || '';
+  setView(`
+    <div class="auth-layout">
+      <div class="auth-main">
+        <div class="auth-card fade-up">
+          <h1>Choose a new password</h1>
+          <p>Your password must be at least 8 characters long.</p>
+          <form class="form-grid" data-form="reset-password" data-token="${h(token)}" novalidate>
+            <div class="form-error" id="resetPasswordError" ${token ? 'hidden' : ''}>This reset link is invalid or missing. Request a new one.</div>
+            <label class="field"><span>New password</span><input type="password" name="newPassword" autocomplete="new-password" minlength="8" required /></label>
+            <label class="field"><span>Confirm new password</span><input type="password" name="confirmPassword" autocomplete="new-password" minlength="8" required /></label>
+            <button type="submit" class="button button-primary button-lg button-block" ${token ? '' : 'disabled'}>Reset password</button>
+          </form>
+          <p class="auth-switch"><a class="link" href="/login">Back to sign in</a></p>
         </div>
       </div>
     </div>`);
@@ -1510,6 +1631,54 @@ async function submitAuth(form, mode) {
       ? await apiRequest('/api/login', { method: 'POST', body: { email: data.email, password: data.password } })
       : await apiRequest('/api/register', { method: 'POST', body: data });
     await completeSignIn(result, { isNewShop: mode === 'register' && data.role === 'shop_owner' });
+  } catch (error) {
+    errorBox.textContent = error.message;
+    errorBox.hidden = false;
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function submitForgotPassword(form) {
+  const errorBox = $('#forgotPasswordError');
+  const notice = $('#forgotPasswordNotice');
+  const button = form.querySelector('[type=submit]');
+  errorBox.hidden = true;
+  notice.hidden = true;
+  try {
+    setBusy(button, true);
+    const result = await apiRequest('/api/forgot-password', {
+      method: 'POST',
+      body: { email: new FormData(form).get('email') }
+    });
+    notice.textContent = result.message;
+    notice.hidden = false;
+  } catch (error) {
+    errorBox.textContent = error.message;
+    errorBox.hidden = false;
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function submitResetPassword(form) {
+  const errorBox = $('#resetPasswordError');
+  const button = form.querySelector('[type=submit]');
+  errorBox.hidden = true;
+  try {
+    const data = Object.fromEntries(new FormData(form).entries());
+    if (data.newPassword !== data.confirmPassword) {
+      errorBox.textContent = 'The passwords do not match.';
+      errorBox.hidden = false;
+      return;
+    }
+    setBusy(button, true);
+    await apiRequest('/api/reset-password', {
+      method: 'POST',
+      body: { token: form.dataset.token, newPassword: data.newPassword }
+    });
+    toast('Your password has been reset. Sign in with your new password.', 'success');
+    navigate('/login', { replace: true });
   } catch (error) {
     errorBox.textContent = error.message;
     errorBox.hidden = false;
@@ -1613,7 +1782,7 @@ async function viewCheckout({ id }) {
   setTitle('Checkout');
   setView(loader);
   const [, paymentInfo, courierData] = await Promise.all([loadCart(), loadPaymentInfo(), apiRequest('/api/couriers')]);
-  state.courierCompanies = courierData.companies || DEFAULT_COURIER_COMPANIES;
+  state.courierCompanies = courierData.companies || [];
   if (stale(id)) return;
   renderChrome();
 
@@ -1654,8 +1823,11 @@ async function viewCheckout({ id }) {
                         <span>Delivery company</span>
                         <select name="courier-${h(shop.shopId)}" data-change="checkout-summary" required>
                           <option value="">Choose a courier</option>
-                          ${state.courierCompanies.map((company) => `<option value="${h(company)}">${h(company)}</option>`).join('')}
+                          ${state.courierCompanies.length
+                            ? state.courierCompanies.map((company) => `<option value="${h(company)}">${h(company)}</option>`).join('')
+                            : '<option value="" disabled>No active courier companies available</option>'}
                         </select>
+                        ${state.courierCompanies.length ? '' : '<small class="hint">Delivery by courier is unavailable until ShopVerse activates a delivery company.</small>'}
                       </label>` : ''}
                 </div>`;
             }).join('')}
@@ -1815,6 +1987,8 @@ const shipmentMarkup = (order, entry) => {
       </div>
       ${entry.dispute && !entry.dispute.resolvedAt ? `<p class="shipment-note warn">${icon('flag')} You reported a problem. Payment is on hold while ShopVerse reviews it.</p>` : ''}
       ${resolvedText ? `<p class="shipment-note">${h(resolvedText)}</p>` : ''}
+      ${entry.courierCompany && entry.deliveryCode ? `<p class="shipment-note">Your delivery code: <strong>${h(entry.deliveryCode)}</strong>. Share it with the courier only when you receive the package.</p>` : ''}
+        ${entry.courierCompany && entry.deliveryCodeUnavailable ? '<p class="shipment-note warn">Your delivery code could not be loaded. Refresh your orders before handing the package to the courier.</p>' : ''}
       ${entry.courierCompany ? `<p class="shipment-note">${h(entry.courierCompany)}${entry.courierReceiptReference ? ` receipt ${h(entry.courierReceiptReference)}` : ''}${entry.courierDeliveredAt ? entry.adminDeliveryApprovedAt ? ' · receipt verified by ShopVerse' : ' · delivery reported, awaiting ShopVerse review' : ' · awaiting courier delivery confirmation'}</p>` : ''}
       ${entry.confirmedAt ? `<p class="shipment-note ok">${icon('checkCircle')} You confirmed receiving this on ${h(formatDate(entry.confirmedAt))}.</p>` : ''}
       ${entry.canConfirm && entry.autoConfirmAt && order.payment && order.payment.protected
@@ -1840,6 +2014,17 @@ async function viewOrders({ id, query }) {
   setTitle('My orders');
   setView(loader);
   const { orders } = await apiRequest('/api/my-orders');
+  if (stale(id)) return;
+  await Promise.all(orders.flatMap((order) => order.fulfillments
+    .filter((entry) => entry.courierCompany && !entry.courierDeliveredAt && entry.status === 'shipped')
+    .map(async (entry) => {
+      try {
+        const code = await apiRequest(`/api/orders/${encodeURIComponent(order.id)}/shops/${encodeURIComponent(entry.shopId)}/delivery-code`, { method: 'POST' });
+        entry.deliveryCode = code.deliveryCode;
+      } catch (error) {
+        entry.deliveryCodeUnavailable = true;
+      }
+    })));
   if (stale(id)) return;
   const placed = query.get('placed');
   const placedOrder = placed && orders.find((order) => order.id === placed);
@@ -1921,6 +2106,15 @@ async function viewCourier({ id }) {
 }
 
 async function submitCourierReceipt(orderId, shopId) {
+  const recipientCode = await promptText({
+    title: 'Verify the recipient',
+    message: 'Ask the customer for the 8-digit code shown in their ShopVerse order. Do not mark delivered without it.',
+    label: 'Customer delivery code',
+    placeholder: '8-digit code',
+    confirmLabel: 'Continue',
+    required: true
+  });
+  if (!recipientCode) return;
   const receiptReference = await promptText({
     title: 'Submit courier delivery receipt',
     message: 'Enter the receipt or delivery reference issued when the customer received the package.',
@@ -1933,7 +2127,7 @@ async function submitCourierReceipt(orderId, shopId) {
   try {
     await apiRequest(`/api/courier/orders/${encodeURIComponent(orderId)}/shops/${encodeURIComponent(shopId)}/delivered`, {
       method: 'POST',
-      body: { receiptReference }
+      body: { receiptReference, recipientCode }
     });
     toast('Receipt submitted for ShopVerse review.', 'success');
     render();
@@ -2742,7 +2936,9 @@ function renderAdminPayments() {
 
   $('#adminPanel').innerHTML = `
     ${section('Courier delivery receipts', 'Review the courier company and receipt reference. Approval confirms delivery and makes eligible protected funds ready for manual payout.', p.deliveryConfirmations, (entry) => adminTaskCard(entry, `
-      <button type="button" class="button button-primary button-xs" data-action="admin-delivery-approve" data-id="${h(entry.orderId)}" data-shop="${h(entry.shopId)}">${icon('check')} Approve delivery</button>`, `<p class="dispute-reason">${h(entry.courierCompany)} receipt: ${h(entry.courierReceiptReference)}</p>`), 'No courier receipts waiting for review.')}
+      <button type="button" class="button button-primary button-xs" data-action="admin-delivery-approve" data-id="${h(entry.orderId)}" data-shop="${h(entry.shopId)}">${icon('check')} Approve delivery</button>`, `<p class="dispute-reason">${h(entry.courierCompany)} receipt: ${h(entry.courierReceiptReference)}</p>${deliveryAuditMarkup(entry)}`), 'No courier receipts waiting for review.')}
+    ${section('Overdue courier shipments', 'Only use the exception after contacting the customer and independently confirming receipt. A written reason is recorded with the order.', p.deliveryEscalations, (entry) => adminTaskCard(entry, `
+      <button type="button" class="button button-danger-ghost button-xs" data-action="admin-delivery-exception" data-id="${h(entry.orderId)}" data-shop="${h(entry.shopId)}">Resolve after investigation</button>`, `${h(entry.courierCompany)} · shipped more than 7 days ago${deliveryAuditMarkup(entry)}`), 'No overdue courier shipments.')}
     ${section('Payments to confirm', 'Check that the money arrived in the ShopVerse account with this reference, then confirm.', p.toConfirm, (entry) => adminTaskCard(entry, `
       <button type="button" class="button button-primary button-xs" data-action="admin-payment" data-id="${h(entry.orderId)}" data-do="confirm">${icon('check')} Money received</button>
       <button type="button" class="button button-danger-ghost button-xs" data-action="admin-payment" data-id="${h(entry.orderId)}" data-do="reject">Not found</button>`), 'No payments waiting.')}
@@ -2757,6 +2953,11 @@ function renderAdminPayments() {
     ${section('Held, waiting for delivery', 'Paid and protected. Standard deliveries release after customer confirmation or the protection period. Courier deliveries require receipt review.', p.held, (entry) => adminTaskCard(entry, ''), 'Nothing held right now.')}
     ${section('Awaiting payment', 'Orders placed but not paid yet.', p.awaiting, (entry) => adminTaskCard(entry, ''), 'No unpaid orders.')}`;
 }
+
+const deliveryAuditMarkup = (entry) => entry.deliveryAudit && entry.deliveryAudit.length ? `
+  <details class="delivery-audit"><summary>Delivery audit (${entry.deliveryAudit.length})</summary>
+    <ol>${entry.deliveryAudit.map((event) => `<li><strong>${h(event.action.replaceAll('_', ' '))}</strong> · ${h(formatDate(event.at))}${event.receiptReference ? ` · receipt ${h(event.receiptReference)}` : ''}${event.note ? ` · ${h(event.note)}` : ''}</li>`).join('')}</ol>
+  </details>` : '';
 
 function renderAdminCouriers() {
   const { couriers, companies } = state.admin.couriers;
@@ -2775,7 +2976,7 @@ function renderAdminCouriers() {
     <section class="admin-section">
       <div class="panel-head"><div><h2>Courier accounts <span class="tab-count">${couriers.length}</span></h2><p>Each account can view and confirm deliveries assigned to its company only.</p></div></div>
       ${couriers.length ? `<div class="order-list">${couriers.map((courier) => `
-        <article class="card admin-task"><div class="admin-task-main"><div><strong>${h(courier.courierCompany)}</strong><div class="meta-row"><span>${h(courier.name)}</span><span>${h(courier.email)}</span></div></div></div></article>`).join('')}</div>` : '<p class="muted admin-empty">No courier logins yet.</p>'}
+        <article class="card admin-task"><div class="admin-task-main"><div><strong>${h(courier.courierCompany)}</strong><div class="meta-row"><span>${h(courier.name)}</span><span>${h(courier.email)}</span><span class="badge ${courier.courierActive ? 'badge-success' : 'badge-warning'}">${courier.courierActive ? 'active' : 'awaiting verification'}</span></div></div><div class="seller-actions"><button type="button" class="button ${courier.courierActive ? 'button-ghost' : 'button-primary'} button-xs" data-action="admin-courier-status" data-id="${h(courier.id)}" data-active="${courier.courierActive ? 'false' : 'true'}">${courier.courierActive ? 'Disable' : 'Verify & activate'}</button></div></div></article>`).join('')}</div>` : '<p class="muted admin-empty">No courier logins yet.</p>'}
     </section>`;
 }
 
@@ -2899,6 +3100,19 @@ async function adminAction(element) {
       body = { action: 'confirm' };
     }
     path = `/api/admin/orders/${encodeURIComponent(id)}/payment`;
+  } else if (action === 'admin-courier-status') {
+    const active = element.dataset.active === 'true';
+    const ok = await confirmDialog({
+      title: active ? 'Verify and activate this courier?' : 'Disable this courier account?',
+      message: active
+        ? 'Activate only after independently verifying the courier company and this staff member. This company will then appear at checkout.'
+        : 'This account will lose access immediately, and new orders will no longer offer this company unless another active courier account exists.',
+      confirmLabel: active ? 'Verify & activate' : 'Disable account',
+      danger: !active
+    });
+    if (!ok) return;
+    body = { active };
+    path = `/api/admin/couriers/${encodeURIComponent(id)}`;
   } else if (action === 'admin-delivery-approve') {
     const ok = await confirmDialog({
       title: 'Approve courier delivery?',
@@ -2907,6 +3121,18 @@ async function adminAction(element) {
     });
     if (!ok) return;
     path = `/api/admin/orders/${encodeURIComponent(id)}/shops/${encodeURIComponent(shop)}/delivery-approval`;
+  } else if (action === 'admin-delivery-exception') {
+    const note = await promptText({
+      title: 'Resolve overdue courier delivery',
+      message: 'Contact the customer and independently confirm they received the package. This recorded exception can make the payout eligible.',
+      label: 'Investigation and resolution note',
+      placeholder: 'Who confirmed receipt, when, and how?',
+      confirmLabel: 'Record resolution',
+      required: true
+    });
+    if (note === null) return;
+    body = { note };
+    path = `/api/admin/orders/${encodeURIComponent(id)}/shops/${encodeURIComponent(shop)}/delivery-exception`;
   } else if (action === 'admin-payout') {
     const reference = await promptText({ title: 'Mark payout as paid', message: 'Send the money to the seller first (for example by MoMo), then record it here.', label: 'Transfer reference (optional)', placeholder: 'e.g. MP240101.5678.B12345', confirmLabel: 'Mark as paid' });
     if (reference === null) return;
@@ -3343,6 +3569,8 @@ function handleSubmit(event) {
   const handlers = {
     login: () => submitAuth(form, 'login'),
     register: () => submitAuth(form, 'register'),
+    'forgot-password': () => submitForgotPassword(form),
+    'reset-password': () => submitResetPassword(form),
     'courier-account': () => submitCourierAccount(form),
     checkout: () => submitCheckout(form),
     product: () => submitProduct(form),
@@ -3408,6 +3636,8 @@ function handleChange(event) {
     case 'role': {
       const shopFields = $('#shopFields');
       if (shopFields) shopFields.hidden = target.value !== 'shop_owner';
+      const googleAuth = $('#googleAuthSection');
+      if (googleAuth && location.pathname.startsWith('/register')) googleAuth.hidden = target.value === 'shop_owner';
       break;
     }
     case 'order-status':
