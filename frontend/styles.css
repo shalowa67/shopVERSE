@@ -1590,6 +1590,34 @@ textarea {
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
+.password-control {
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+.password-control input {
+  padding-right: 64px;
+}
+
+.password-toggle {
+  position: absolute;
+  right: 12px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--brand);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.password-toggle:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
 textarea {
   height: auto;
   padding: 10px 12px;

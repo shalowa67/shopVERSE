@@ -1457,7 +1457,7 @@ async function viewAuth(mode, { query }) {
               </div>
               <label class="field"><span>Full name</span><input type="text" name="name" autocomplete="name" maxlength="80" required /></label>` : ''}
             <label class="field"><span>Email</span><input type="email" name="email" autocomplete="email" placeholder="you@example.com" required /></label>
-            <label class="field"><span>Password ${isRegister ? '<span class="hint">· at least 8 characters</span>' : ''}</span><input type="password" name="password" autocomplete="${isRegister ? 'new-password' : 'current-password'}" minlength="${isRegister ? 8 : 1}" required /></label>
+            <label class="field"><span>Password ${isRegister ? '<span class="hint">· at least 8 characters</span>' : ''}</span><div class="password-control"><input type="password" name="password" autocomplete="${isRegister ? 'new-password' : 'current-password'}" minlength="${isRegister ? 8 : 1}" required /><button type="button" class="password-toggle" data-action="toggle-password" aria-pressed="false">Show</button></div></label>
             ${isRegister ? `
               <div class="form-grid" id="shopFields" ${role === 'shop_owner' ? '' : 'hidden'}>
                 <label class="field"><span>Shop name</span><input type="text" name="shopName" maxlength="80" placeholder="e.g. Lusaka Fresh Finds" /></label>
@@ -3033,6 +3033,14 @@ function viewInstall() {
 
 async function handleAction(action, element, event) {
   switch (action) {
+    case 'toggle-password': {
+      const input = element.closest('.password-control').querySelector('input');
+      const isVisible = input.type === 'password';
+      input.type = isVisible ? 'text' : 'password';
+      element.textContent = isVisible ? 'Hide' : 'Show';
+      element.setAttribute('aria-pressed', String(isVisible));
+      break;
+    }
     case 'add-to-cart': {
       const qtyInput = element.dataset.qtyInput ? $(element.dataset.qtyInput) : null;
       const quantity = qtyInput ? Math.max(1, parseInt(qtyInput.value, 10) || 1) : 1;
