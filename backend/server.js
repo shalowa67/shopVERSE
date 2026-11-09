@@ -60,6 +60,7 @@ const ADMIN_EMAILS = String(process.env.SHOPVERSE_ADMIN_EMAILS || '')
   .filter(Boolean);
 
 const ROLES = ['customer', 'shop_owner'];
+const DEFAULT_COURIER_COMPANIES = ['Platinum', 'Mercury'];
 const VERIFICATION_STATUSES = ['none', 'pending', 'verified', 'rejected'];
 const ORDER_FLOW = ['pending', 'confirmed', 'packed', 'shipped', 'delivered'];
 const ORDER_STATUSES = [...ORDER_FLOW, 'cancelled'];
@@ -452,6 +453,7 @@ const sanitizeUser = (user) => {
       }
     });
   }
+  if (user.role === 'courier') result.courierCompany = user.courierCompany;
   return result;
 };
 
@@ -618,10 +620,14 @@ const serializeCustomerOrder = (order) => {
         deliveryFee: fulfilment.deliveryFee || 0,
         whatsapp: shop ? market.phoneDigits(shop.shopPhone) : null,
         pickupLocation: fulfilment.method === 'pickup' && shop ? shop.shopLocation : null,
+        courierCompany: fulfilment.courierCompany || null,
+        courierDeliveredAt: fulfilment.courierDeliveredAt || null,
+        courierReceiptReference: fulfilment.courierReceiptReference || null,
+        adminDeliveryApprovedAt: fulfilment.adminDeliveryApprovedAt || null,
         confirmedAt: fulfilment.confirmedAt || null,
         dispute: fulfilment.dispute || null,
         autoConfirmAt: market.autoReleaseAt(order, shopId),
-        canConfirm: ['shipped', 'delivered'].includes(shopStatus) && !fulfilment.confirmedAt && !(fulfilment.dispute && !fulfilment.dispute.resolvedAt),
+        canConfirm: !fulfilment.courierCompany && ['shipped', 'delivered'].includes(shopStatus) && !fulfilment.confirmedAt && !(fulfilment.dispute && !fulfilment.dispute.resolvedAt),
         canDispute: ['shipped', 'delivered'].includes(shopStatus) && !fulfilment.confirmedAt && !fulfilment.dispute && !fulfilment.paidOutAt
       };
     })
@@ -642,6 +648,10 @@ const serializeShopOrder = (order, shopId) => {
     total: amounts.gross,
     status: order.shopStatuses[shopId] || 'pending',
     method: fulfilment.method || 'delivery',
+    courierCompany: fulfilment.courierCompany || null,
+    courierReceiptReference: fulfilment.courierReceiptReference || null,
+    courierDeliveredAt: fulfilment.courierDeliveredAt || null,
+    adminDeliveryApprovedAt: fulfilment.adminDeliveryApprovedAt || null,
     paymentMethod: order.paymentMethod,
     paymentStatus: order.paymentStatus,
     paymentProtected: Boolean(order.payment && order.payment.protected),
@@ -1439,8 +1449,14 @@ app.post('/api/orders', ...customerOnly('Only customers can place orders.'), asy
   });
   Object.entries(fulfilment).forEach(([shopId, entry]) => {
     const delivery = market.deliveryOf(getShopById(shopId));
-    entry.method = market.chooseMethod(delivery, requestedMethods[shopId]);
+    const requested = requestedMethods[shopId];
+    entry.method = market.chooseMethod(delivery, requested && typeof requested === 'object' ? requested.method : requested);
     entry.deliveryFee = entry.method === 'delivery' ? market.deliveryFeeFor(delivery, entry.itemsSubtotal) : 0;
+    if (entry.method === 'delivery') {
+      const courierCompany = text(requestedMethods[shopId] && requestedMethods[shopId].courierCompany, { field: 'Courier company', max: 80 });
+      if (courierCompany && !getCourierCompanies().includes(courierCompany)) fail(400, 'Please choose an available delivery company.');
+      if (courierCompany) entry.courierCompany = courierCompany;
+    }
     delete entry.itemsSubtotal;
   });
   const needsAddress = Object.values(fulfilment).some((entry) => entry.method === 'delivery');
@@ -1553,6 +1569,15 @@ const findCustomerOrder = (req) => {
   return order;
 };
 
+const getCourierCompanies = () => [...new Set([
+  ...DEFAULT_COURIER_COMPANIES,
+  ...users.filter((user) => user.role === 'courier').map((user) => user.courierCompany)
+])].sort((a, b) => a.localeCompare(b));
+
+app.get('/api/couriers', (req, res) => {
+  res.json({ success: true, companies: getCourierCompanies() });
+});
+
 // The customer tells ShopVerse they have paid and gives the mobile money / bank transaction ID.
 app.post('/api/orders/:orderId/payment', ...customerOnly('Only customers can pay for orders.'), asyncRoute(async (req, res) => {
   const order = findCustomerOrder(req);
@@ -1585,6 +1610,7 @@ app.post('/api/orders/:orderId/confirm', ...customerOnly('Only customers can con
 
   shopIds.forEach((shopId) => {
     const fulfilment = requireShopInOrder(order, shopId);
+    if (fulfilment.courierCompany) fail(403, 'The assigned courier must confirm delivery. ShopVerse will review their receipt before payout.');
     const status = order.shopStatuses[shopId];
     if (!['shipped', 'delivered'].includes(status) || fulfilment.confirmedAt) return;
     if (fulfilment.dispute && !fulfilment.dispute.resolvedAt) return;
@@ -1644,11 +1670,12 @@ app.patch('/api/orders/:orderId/status', authMiddleware,
     if (!ORDER_STATUSES.includes(status)) fail(400, `Status must be one of: ${ORDER_STATUSES.join(', ')}.`);
 
     const current = order.shopStatuses[req.user.id];
+    const fulfilment = requireShopInOrder(order, req.user.id);
+    if (status === 'delivered' && fulfilment.courierCompany) fail(403, 'The assigned courier must confirm delivery for this order.');
     if (current !== status) {
       if (FINAL_STATUSES.includes(current)) fail(409, `This order is already ${current} and cannot be changed.`);
 
       order.shopStatuses[req.user.id] = status;
-      const fulfilment = requireShopInOrder(order, req.user.id);
       if (status === 'cancelled') restockItems(order.items.filter((item) => item.shopId === req.user.id));
       if (status === 'delivered') fulfilment.deliveredAt = nowIso();
       order.status = deriveOrderStatus(order);
@@ -1661,6 +1688,10 @@ app.patch('/api/orders/:orderId/status', authMiddleware,
       if (status === 'delivered' && order.payment.protected) {
         const days = Math.round(market.PAYOUT_WINDOW_MS / (24 * 60 * 60 * 1000));
         message += ` Please confirm you received it, or report a problem within ${days} days.`;
+      }
+      if (status === 'shipped' && fulfilment.courierCompany) {
+        const courierUsers = users.filter((user) => user.role === 'courier' && user.courierCompany === fulfilment.courierCompany);
+        courierUsers.forEach((courier) => createNotification(courier.id, 'delivery', `Order #${shortId(order.id)} from ${shopNameIn(order, req.user.id)} is ready for delivery confirmation.`));
       }
       if (status === 'cancelled' && order.payment.confirmedAt) message += ' ShopVerse will refund your payment for these items.';
       createNotification(order.customerId, 'status', message);
@@ -1755,6 +1786,7 @@ app.get('/api/dashboard', authMiddleware, (req, res) => {
 // ---------------------------------------------------------------------------
 
 const adminOnly = [authMiddleware, requireAdmin];
+const courierOnly = [authMiddleware, requireRole('courier', 'Only registered delivery companies can confirm delivery.')];
 
 const adminOrderEntry = (order, shopId = null) => {
   const entry = {
@@ -1783,6 +1815,13 @@ const adminOrderEntry = (order, shopId = null) => {
       net: amounts.net,
       dispute: (order.fulfilment[shopId] || {}).dispute || null
     });
+    const fulfilment = order.fulfilment[shopId] || {};
+    Object.assign(entry, {
+      courierCompany: fulfilment.courierCompany || null,
+      courierDeliveredAt: fulfilment.courierDeliveredAt || null,
+      courierReceiptReference: fulfilment.courierReceiptReference || null,
+      adminDeliveryApprovedAt: fulfilment.adminDeliveryApprovedAt || null
+    });
   }
   return entry;
 };
@@ -1796,6 +1835,39 @@ const findOrder = (orderId) => {
 app.get('/api/admin/overview', ...adminOnly, (req, res) => {
   res.json({ success: true, metrics: market.marketplaceMetrics({ users, products, orders, commissionPercent: COMMISSION_PERCENT }) });
 });
+
+app.get('/api/admin/couriers', ...adminOnly, (req, res) => {
+  const couriers = users.filter((user) => user.role === 'courier').map((user) => ({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    courierCompany: user.courierCompany
+  }));
+  res.json({ success: true, companies: getCourierCompanies(), couriers });
+});
+
+app.post('/api/admin/couriers', ...adminOnly, asyncRoute(async (req, res) => {
+  const body = req.body || {};
+  const name = text(body.name, { field: 'Name', max: 80, required: true });
+  const email = normalizeEmail(body.email);
+  if (!isValidEmail(email)) fail(400, 'Please provide a valid email address.');
+  const password = validatePassword(body.password);
+  const courierCompany = text(body.courierCompany, { field: 'Courier company', max: 80, required: true });
+  if (getUserByEmail(email)) fail(409, 'An account with that email already exists.');
+
+  const courier = {
+    id: crypto.randomUUID(),
+    name,
+    email,
+    password: hashPassword(password),
+    role: 'courier',
+    courierCompany,
+    createdAt: nowIso()
+  };
+  users.push(courier);
+  await persistAppState();
+  res.status(201).json({ success: true, courier: sanitizeUser(courier) });
+}));
 
 app.get('/api/admin/sellers', ...adminOnly, (req, res) => {
   const statusRank = { pending: 0, none: 1, rejected: 2, verified: 3 };
@@ -1915,9 +1987,14 @@ app.get('/api/admin/payments', ...adminOnly, (req, res) => {
     .map((order) => adminOrderEntry(order)).sort(newestFirst);
 
   const byState = { ready: [], refund_due: [], on_hold: [], held: [] };
+  const deliveryConfirmations = [];
   orders.forEach((order) => Object.keys(order.shopStatuses).forEach((shopId) => {
     const state = market.payoutState(order, shopId);
     if (byState[state]) byState[state].push(adminOrderEntry(order, shopId));
+    const fulfilment = order.fulfilment[shopId] || {};
+    if (fulfilment.courierDeliveredAt && !fulfilment.adminDeliveryApprovedAt && !(fulfilment.dispute && !fulfilment.dispute.resolvedAt)) {
+      deliveryConfirmations.push(adminOrderEntry(order, shopId));
+    }
   }));
 
   res.json({
@@ -1927,9 +2004,68 @@ app.get('/api/admin/payments', ...adminOnly, (req, res) => {
     payouts: byState.ready.sort(newestFirst),
     refunds: byState.refund_due.sort(newestFirst),
     disputes: byState.on_hold.sort(newestFirst),
-    held: byState.held.sort(newestFirst)
+    held: byState.held.sort(newestFirst),
+    deliveryConfirmations: deliveryConfirmations.sort(newestFirst)
   });
 });
+
+app.get('/api/courier/deliveries', ...courierOnly, (req, res) => {
+  const deliveries = [];
+  orders.forEach((order) => Object.keys(order.shopStatuses).forEach((shopId) => {
+    const fulfilment = order.fulfilment[shopId] || {};
+    if (fulfilment.courierCompany !== req.user.courierCompany || order.shopStatuses[shopId] !== 'shipped' || fulfilment.courierDeliveredAt) return;
+    deliveries.push({
+      orderId: order.id,
+      shopId,
+      reference: order.payment.reference,
+      courierCompany: fulfilment.courierCompany,
+      customerName: order.customerName,
+      customerPhone: order.contactPhone || null,
+      shippingAddress: order.shippingAddress,
+      shopName: shopNameIn(order, shopId),
+      items: order.items.filter((item) => item.shopId === shopId),
+      createdAt: order.createdAt
+    });
+  }));
+  res.json({ success: true, deliveries });
+});
+
+app.post('/api/courier/orders/:orderId/shops/:shopId/delivered', ...courierOnly, asyncRoute(async (req, res) => {
+  const order = findOrder(req.params.orderId);
+  const fulfilment = requireShopInOrder(order, req.params.shopId);
+  if (fulfilment.courierCompany !== req.user.courierCompany) fail(403, 'This delivery is not assigned to your company.');
+  if (order.shopStatuses[req.params.shopId] !== 'shipped') fail(409, 'The seller must mark this order shipped before delivery can be confirmed.');
+  if (fulfilment.courierDeliveredAt) fail(409, 'This delivery has already been confirmed by the courier.');
+  if (fulfilment.dispute && !fulfilment.dispute.resolvedAt) fail(409, 'This order is on hold while ShopVerse reviews a customer report.');
+
+  const receiptReference = text((req.body || {}).receiptReference, { field: 'Courier receipt/reference', max: 80, required: true });
+  fulfilment.courierDeliveredAt = nowIso();
+  fulfilment.courierReceiptReference = receiptReference;
+  fulfilment.deliveredAt = fulfilment.courierDeliveredAt;
+  order.shopStatuses[req.params.shopId] = 'delivered';
+  order.status = deriveOrderStatus(order);
+  order.updatedAt = nowIso();
+  createNotification(order.customerId, 'status', `${fulfilment.courierCompany} reported order #${shortId(order.id)} delivered. ShopVerse will review the receipt before releasing payment.`);
+  users.filter(isAdmin).forEach((admin) => createNotification(admin.id, 'delivery', `Courier receipt needs review for order #${shortId(order.id)} (${receiptReference}).`));
+  await persistAppState();
+  res.json({ success: true, delivery: adminOrderEntry(order, req.params.shopId) });
+}));
+
+app.post('/api/admin/orders/:orderId/shops/:shopId/delivery-approval', ...adminOnly, asyncRoute(async (req, res) => {
+  const order = findOrder(req.params.orderId);
+  const fulfilment = requireShopInOrder(order, req.params.shopId);
+  if (!fulfilment.courierCompany || !fulfilment.courierDeliveredAt) fail(409, 'There is no courier delivery receipt waiting for review.');
+  if (fulfilment.dispute && !fulfilment.dispute.resolvedAt) fail(409, 'Resolve the open customer report before approving delivery.');
+  if (fulfilment.adminDeliveryApprovedAt) fail(409, 'This courier delivery has already been approved.');
+
+  fulfilment.adminDeliveryApprovedAt = nowIso();
+  fulfilment.adminDeliveryApprovedBy = req.user.id;
+  createNotification(order.customerId, 'status', `ShopVerse verified the ${fulfilment.courierCompany} delivery receipt for order #${shortId(order.id)}.`);
+  const shop = getShopById(req.params.shopId);
+  if (shop) createNotification(shop.id, 'sale', `ShopVerse approved the ${fulfilment.courierCompany} delivery receipt for order #${shortId(order.id)}. Payout is ready.`);
+  await persistAppState();
+  res.json({ success: true, entry: adminOrderEntry(order, req.params.shopId) });
+}));
 
 // Confirm (or reject) that a customer's payment reached ShopVerse's account.
 app.post('/api/admin/orders/:orderId/payment', ...adminOnly, asyncRoute(async (req, res) => {

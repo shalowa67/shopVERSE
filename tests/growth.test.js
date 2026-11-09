@@ -36,7 +36,7 @@ async function api(path, { method = 'GET', token, body } = {}) {
   return { status: response.status, data };
 }
 
-const login = async (email) => (await api('/api/login', { method: 'POST', body: { email, password: '123456' } })).data.token;
+const login = async (email, password = '123456') => (await api('/api/login', { method: 'POST', body: { email, password } })).data.token;
 const tokens = async () => ({
   customer: await login('customer@shopverse.com'),
   owner: await login('owner@shopverse.com'),
@@ -166,6 +166,76 @@ test('payouts release automatically if the customer stays silent after delivery'
   assert.equal(market.payoutState(stored, 'shop-owner-demo'), 'held', 'still inside the protection window');
   const later = new Date(stored.fulfilment['shop-owner-demo'].deliveredAt).getTime() + market.PAYOUT_WINDOW_MS + 1000;
   assert.equal(market.payoutState(stored, 'shop-owner-demo', later), 'ready');
+});
+
+test('courier deliveries require courier verification and admin approval before payout', async () => {
+  const { customer, admin } = await tokens();
+  const order = await placeOrder(customer, [['prod-1', 1]]);
+  await api(`/api/admin/orders/${order.id}/payment`, { method: 'POST', token: admin, body: { action: 'confirm' } });
+
+  const stored = orders.find((entry) => entry.id === order.id);
+  const fulfilment = stored.fulfilment['shop-owner-demo'];
+  fulfilment.courierCompany = 'Platinum';
+  fulfilment.deliveredAt = new Date(Date.now() - market.PAYOUT_WINDOW_MS - 1000).toISOString();
+  fulfilment.courierDeliveredAt = new Date().toISOString();
+  stored.shopStatuses['shop-owner-demo'] = 'delivered';
+
+  assert.equal(market.autoReleaseAt(stored, 'shop-owner-demo'), null);
+  assert.equal(market.payoutState(stored, 'shop-owner-demo'), 'held');
+
+  fulfilment.adminDeliveryApprovedAt = new Date().toISOString();
+  assert.equal(market.payoutState(stored, 'shop-owner-demo'), 'ready');
+});
+
+test('assigned courier confirms delivery and admin approval is required before payout', async () => {
+  const { customer, owner, admin } = await tokens();
+  const createCourier = async (name, email, courierCompany) => {
+    const created = await api('/api/admin/couriers', {
+      method: 'POST',
+      token: admin,
+      body: { name, email, password: 'courier-password', courierCompany }
+    });
+    assert.equal(created.status, 201);
+    return login(email, 'courier-password');
+  };
+  const platinum = await createCourier('Platinum Agent', 'platinum-agent@example.com', 'Platinum');
+  const mercury = await createCourier('Mercury Agent', 'mercury-agent@example.com', 'Mercury');
+  const companies = await api('/api/couriers');
+  assert.ok(companies.data.companies.includes('Platinum'));
+  assert.ok(companies.data.companies.includes('Mercury'));
+
+  const order = await placeOrder(customer, [['prod-1', 1]], {
+    fulfilment: { 'shop-owner-demo': { method: 'delivery', courierCompany: 'Platinum' } }
+  });
+  assert.equal(order.fulfillments[0].courierCompany, 'Platinum');
+  await api(`/api/admin/orders/${order.id}/payment`, { method: 'POST', token: admin, body: { action: 'confirm' } });
+  assert.equal((await api(`/api/orders/${order.id}/status`, { method: 'PATCH', token: owner, body: { status: 'delivered' } })).status, 403);
+  assert.equal((await api(`/api/orders/${order.id}/status`, { method: 'PATCH', token: owner, body: { status: 'shipped' } })).status, 200);
+
+  const wrongCourierDeliveries = await api('/api/courier/deliveries', { token: mercury });
+  assert.equal(wrongCourierDeliveries.data.deliveries.length, 0);
+  const unauthorizedReceipt = await api(`/api/courier/orders/${order.id}/shops/shop-owner-demo/delivered`, {
+    method: 'POST', token: mercury, body: { receiptReference: 'MER-001' }
+  });
+  assert.equal(unauthorizedReceipt.status, 403);
+
+  const assignedDeliveries = await api('/api/courier/deliveries', { token: platinum });
+  assert.ok(assignedDeliveries.data.deliveries.some((entry) => entry.orderId === order.id));
+  const courierReceipt = await api(`/api/courier/orders/${order.id}/shops/shop-owner-demo/delivered`, {
+    method: 'POST', token: platinum, body: { receiptReference: 'PLT-RECEIPT-001' }
+  });
+  assert.equal(courierReceipt.status, 200);
+  assert.equal((await api(`/api/orders/${order.id}/confirm`, { method: 'POST', token: customer, body: {} })).status, 403);
+
+  const earlyPayout = await api(`/api/admin/orders/${order.id}/shops/shop-owner-demo/payout`, { method: 'POST', token: admin, body: {} });
+  assert.equal(earlyPayout.status, 409);
+  const pendingReviews = await api('/api/admin/payments', { token: admin });
+  assert.ok(pendingReviews.data.deliveryConfirmations.some((entry) => entry.orderId === order.id && entry.courierReceiptReference === 'PLT-RECEIPT-001'));
+
+  const approved = await api(`/api/admin/orders/${order.id}/shops/shop-owner-demo/delivery-approval`, { method: 'POST', token: admin, body: {} });
+  assert.equal(approved.status, 200);
+  const payout = await api(`/api/admin/orders/${order.id}/shops/shop-owner-demo/payout`, { method: 'POST', token: admin, body: { reference: 'SELLER-MOMO-001' } });
+  assert.equal(payout.status, 200);
 });
 
 test('a reported problem freezes the payout until an admin resolves it', async () => {

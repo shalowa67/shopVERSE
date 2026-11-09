@@ -43,7 +43,21 @@ buyer's transaction ID.
 
 Never confirm a payment you cannot see on the statement.
 
-### 2. Disputes (same day)
+### 2. Courier delivery receipts (before seller payouts)
+
+Create courier logins under **Admin → Delivery companies**. Add the company name
+and create a separate login for each courier staff member. Share temporary passwords
+through a secure channel. Adding a company makes it selectable by customers at
+checkout; it does not connect to that company's external system.
+
+When a courier submits a delivery receipt, open **Admin → Payments → Courier
+delivery receipts**. Match the company and receipt/reference against the courier's
+proof, then tap **Approve delivery**. This confirmation is required before a courier
+delivery's protected seller payout can become ready. Courier deliveries do not
+auto-release after three days, and customers cannot confirm them on the courier's
+behalf.
+
+### 3. Disputes (same day)
 
 A buyer reported a problem. The seller's money is frozen until you decide.
 
@@ -56,7 +70,7 @@ A buyer reported a problem. The seller's money is frozen until you decide.
      described. Arrange the return of goods with the seller where it makes sense.
 4. Add a short note. Both sides are notified.
 
-### 3. Payouts ready (daily, or on fixed payout days)
+### 4. Payouts ready (daily, or on fixed payout days)
 
 The buyer has their order and the money can go to the seller.
 
@@ -67,7 +81,7 @@ The buyer has their order and the money can go to the seller.
 Sellers trust ShopVerse when payouts are fast. Aim for the same day, or tell sellers
 your fixed payout days (e.g. Tuesdays and Fridays).
 
-### 4. Refunds due (same day)
+### 5. Refunds due (same day)
 
 An order was cancelled after the buyer paid.
 

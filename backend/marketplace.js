@@ -119,6 +119,10 @@ const payoutState = (order, shopId, now = Date.now()) => {
   if (payment.status === 'pending' || payment.status === 'submitted') return 'awaiting_payment';
   if (fulfilment.paidOutAt) return 'paid';
   if (fulfilment.dispute && !fulfilment.dispute.resolvedAt) return 'on_hold';
+  if (fulfilment.courierCompany) {
+    const disputeReleased = fulfilment.dispute && fulfilment.dispute.resolution === 'release';
+    return disputeReleased || (fulfilment.courierDeliveredAt && fulfilment.adminDeliveryApprovedAt) ? 'ready' : 'held';
+  }
   if (status === 'delivered') {
     const confirmed = Boolean(fulfilment.confirmedAt) ||
       (fulfilment.dispute && fulfilment.dispute.resolution === 'release') ||
@@ -131,7 +135,7 @@ const payoutState = (order, shopId, now = Date.now()) => {
 // When the payout will be released automatically (seller marked delivered, customer silent).
 const autoReleaseAt = (order, shopId) => {
   const fulfilment = (order.fulfilment && order.fulfilment[shopId]) || {};
-  if (!fulfilment.deliveredAt || fulfilment.confirmedAt) return null;
+  if (fulfilment.courierCompany || !fulfilment.deliveredAt || fulfilment.confirmedAt) return null;
   return new Date(new Date(fulfilment.deliveredAt).getTime() + PAYOUT_WINDOW_MS).toISOString();
 };
 

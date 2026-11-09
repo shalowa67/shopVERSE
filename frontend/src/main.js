@@ -42,6 +42,7 @@ const PAYMENT_LABELS = Object.fromEntries(
     ])
 );
 const PROTECTION_DAYS = 3;
+const DEFAULT_COURIER_COMPANIES = ['Platinum', 'Mercury'];
 
 const PAYOUT_LABELS = {
   awaiting_payment: { label: 'Waiting for payment', tone: 'warning', hint: "Don't ship yet: the customer hasn't paid." },
@@ -67,6 +68,7 @@ const PAYMENT_STATUS_LABELS = {
 
 const state = {
   user: null,
+  courierCompanies: DEFAULT_COURIER_COMPANIES,
   cart: { items: [], itemCount: 0, subtotal: 0 },
   unread: 0,
   demo: false,
@@ -314,6 +316,7 @@ const canBuy = () => !state.user || state.user.role === 'customer';
 // Where each kind of account lands after signing in.
 const homePathFor = (user) => {
   if (user && user.role === 'admin') return '/admin';
+  if (user && user.role === 'courier') return '/courier';
   if (user && user.role === 'shop_owner') return '/studio';
   return '/';
 };
@@ -691,7 +694,8 @@ function toggleAccountMenu() {
     ${isOwner
       ? `<a href="/studio" role="menuitem">${icon('chart')} Seller studio</a>
          <a href="/shops/${encodeURIComponent(state.user.id)}" role="menuitem">${icon('store')} View my storefront</a>`
-      : state.user.role === 'customer' ? `<a href="/orders" role="menuitem">${icon('receipt')} My orders</a>` : ''}
+      : state.user.role === 'customer' ? `<a href="/orders" role="menuitem">${icon('receipt')} My orders</a>`
+        : state.user.role === 'courier' ? `<a href="/courier" role="menuitem">${icon('truck')} Delivery portal</a>` : ''}
     ${state.user.isAdmin ? `<a href="/admin" role="menuitem">${icon('shield')} Admin dashboard</a>` : ''}
     <a href="/account" role="menuitem">${icon('settings')} Account settings</a>
     <button type="button" role="menuitem" data-action="logout">${icon('logout')} Sign out</button>`;
@@ -879,6 +883,7 @@ const routes = [
   [/^\/account\/?$/, viewAccount],
   [/^\/install\/?$/, viewInstall],
   [/^\/admin\/?$/, viewAdmin]
+  ,[/^\/courier\/?$/, viewCourier]
 ];
 
 function navigate(url, { replace = false } = {}) {
@@ -1572,11 +1577,12 @@ function checkoutSelection(form) {
   state.cart.shops.forEach((shop) => {
     const field = form.elements[`fulfil-${shop.shopId}`];
     const method = (field && field.value) || shop.defaultMethod;
-    methods[shop.shopId] = method;
+    const courierField = form.elements[`courier-${shop.shopId}`];
+    methods[shop.shopId] = { method, courierCompany: method === 'delivery' && courierField ? courierField.value : '' };
     if (method === 'delivery') deliveryTotal += shop.deliveryFee;
   });
   const total = Math.round((state.cart.subtotal + deliveryTotal) * 100) / 100;
-  return { methods, deliveryTotal, total, needsAddress: Object.values(methods).includes('delivery') };
+  return { methods, deliveryTotal, total, needsAddress: Object.values(methods).some((entry) => entry.method === 'delivery') };
 }
 
 function updateCheckoutSummary() {
@@ -1589,6 +1595,14 @@ function updateCheckoutSummary() {
   const addressField = $('#addressField');
   addressField.hidden = !selection.needsAddress;
   addressField.querySelector('textarea').required = selection.needsAddress;
+  state.cart.shops.forEach((shop) => {
+    const courierSelect = form.elements[`courier-${shop.shopId}`];
+    const courierField = courierSelect && courierSelect.closest('.courier-select');
+    if (!courierField) return;
+    const needsCourier = selection.methods[shop.shopId].method === 'delivery';
+    courierField.hidden = !needsCourier;
+    courierSelect.required = needsCourier;
+  });
   const method = (form.elements.paymentMethod && form.elements.paymentMethod.value) || '';
   $('#protectNotice').hidden = method === 'cash_on_delivery';
   $('#codNotice').hidden = method !== 'cash_on_delivery';
@@ -1598,7 +1612,8 @@ async function viewCheckout({ id }) {
   if (!requireRole('customer')) return;
   setTitle('Checkout');
   setView(loader);
-  const [, paymentInfo] = await Promise.all([loadCart(), loadPaymentInfo()]);
+  const [, paymentInfo, courierData] = await Promise.all([loadCart(), loadPaymentInfo(), apiRequest('/api/couriers')]);
+  state.courierCompanies = courierData.companies || DEFAULT_COURIER_COMPANIES;
   if (stale(id)) return;
   renderChrome();
 
@@ -1634,6 +1649,14 @@ async function viewCheckout({ id }) {
                         <div><strong>${option.label} · ${h(option.price)}</strong><small>${h(option.hint)}</small></div>
                       </label>`).join('')}
                   </div>
+                    ${options.some((option) => option.value === 'delivery') ? `
+                      <label class="field courier-select" style="margin-top:12px">
+                        <span>Delivery company</span>
+                        <select name="courier-${h(shop.shopId)}" data-change="checkout-summary" required>
+                          <option value="">Choose a courier</option>
+                          ${state.courierCompanies.map((company) => `<option value="${h(company)}">${h(company)}</option>`).join('')}
+                        </select>
+                      </label>` : ''}
                 </div>`;
             }).join('')}
             <div class="form-grid two" style="margin-top: 18px">
@@ -1691,6 +1714,12 @@ async function viewCheckout({ id }) {
 async function submitCheckout(form) {
   const data = Object.fromEntries(new FormData(form).entries());
   const selection = checkoutSelection(form);
+  const missingCourier = state.cart.shops.find((shop) => selection.methods[shop.shopId].method === 'delivery' && !selection.methods[shop.shopId].courierCompany);
+  if (missingCourier) {
+    toast(`Choose a delivery company for ${missingCourier.shopName}.`, 'error');
+    form.elements[`courier-${missingCourier.shopId}`].focus();
+    return;
+  }
   if (selection.needsAddress && !String(data.shippingAddress || '').trim()) {
     toast('Please enter a delivery address.', 'error');
     form.elements.shippingAddress.focus();
@@ -1786,6 +1815,7 @@ const shipmentMarkup = (order, entry) => {
       </div>
       ${entry.dispute && !entry.dispute.resolvedAt ? `<p class="shipment-note warn">${icon('flag')} You reported a problem. Payment is on hold while ShopVerse reviews it.</p>` : ''}
       ${resolvedText ? `<p class="shipment-note">${h(resolvedText)}</p>` : ''}
+      ${entry.courierCompany ? `<p class="shipment-note">${h(entry.courierCompany)}${entry.courierReceiptReference ? ` receipt ${h(entry.courierReceiptReference)}` : ''}${entry.courierDeliveredAt ? entry.adminDeliveryApprovedAt ? ' · receipt verified by ShopVerse' : ' · delivery reported, awaiting ShopVerse review' : ' · awaiting courier delivery confirmation'}</p>` : ''}
       ${entry.confirmedAt ? `<p class="shipment-note ok">${icon('checkCircle')} You confirmed receiving this on ${h(formatDate(entry.confirmedAt))}.</p>` : ''}
       ${entry.canConfirm && entry.autoConfirmAt && order.payment && order.payment.protected
         ? `<p class="shipment-note">Not received? Report it before ${h(formatDate(entry.autoConfirmAt))}, when payment is released automatically.</p>` : ''}
@@ -1858,6 +1888,58 @@ async function viewOrders({ id, query }) {
     </div>`);
 
   if (placed) $(`#order-${CSS.escape(placed)}`)?.scrollIntoView({ block: 'start' });
+}
+
+async function viewCourier({ id }) {
+  if (!requireRole('courier')) return;
+  setTitle('Courier deliveries');
+  setView(loader);
+  const { deliveries } = await apiRequest('/api/courier/deliveries');
+  if (stale(id)) return;
+  setView(`
+    <div class="container">
+      <div class="page-head"><h1>${h(state.user.courierCompany)} deliveries</h1><p>Confirm delivery only after checking the recipient and obtaining the courier receipt reference.</p></div>
+      <div class="order-list section-tight">
+        ${deliveries.length ? deliveries.map((delivery) => `
+          <article class="card order-card">
+            <div class="order-head">
+              <div class="order-head-meta">
+                <div><span>Order</span><strong>#${h(shortId(delivery.orderId))}</strong></div>
+                <div><span>Shop</span><strong>${h(delivery.shopName)}</strong></div>
+                <div><span>Customer</span><strong>${h(delivery.customerName)}</strong></div>
+              </div>
+              ${statusPill('shipped')}
+            </div>
+            <div class="order-body">
+              <div><h4>Delivery address</h4><p>${h(delivery.shippingAddress || 'No address provided')}${delivery.customerPhone ? `<br>${h(delivery.customerPhone)}` : ''}</p></div>
+              <div><h4>Items</h4><p>${delivery.items.map((item) => `${h(item.quantity)} × ${h(item.productName)}`).join('<br>')}</p></div>
+            </div>
+            <div class="order-foot"><span class="muted">Payment ref ${h(delivery.reference)}</span><button type="button" class="button button-primary button-sm" data-action="courier-confirm" data-id="${h(delivery.orderId)}" data-shop="${h(delivery.shopId)}">${icon('check')} Submit delivery receipt</button></div>
+          </article>`).join('') : emptyState({ iconName: 'truck', title: 'No deliveries awaiting confirmation', text: 'New assigned deliveries will appear here after the shop marks them shipped.' })}
+      </div>
+    </div>`);
+}
+
+async function submitCourierReceipt(orderId, shopId) {
+  const receiptReference = await promptText({
+    title: 'Submit courier delivery receipt',
+    message: 'Enter the receipt or delivery reference issued when the customer received the package.',
+    label: 'Courier receipt/reference',
+    placeholder: 'e.g. delivery receipt number',
+    confirmLabel: 'Submit receipt',
+    required: true
+  });
+  if (!receiptReference) return;
+  try {
+    await apiRequest(`/api/courier/orders/${encodeURIComponent(orderId)}/shops/${encodeURIComponent(shopId)}/delivered`, {
+      method: 'POST',
+      body: { receiptReference }
+    });
+    toast('Receipt submitted for ShopVerse review.', 'success');
+    render();
+  } catch (error) {
+    reportApiError(error);
+  }
 }
 
 async function submitPayment(form) {
@@ -2292,6 +2374,7 @@ function renderStudioOrders() {
             </div>
             <div class="order-aside">
               <div><h4>${order.method === 'pickup' ? 'Customer collects' : 'Deliver to'}</h4><p>${order.method === 'pickup' ? 'Pickup from your shop' : h(order.shippingAddress || '')}</p></div>
+              ${order.courierCompany ? `<div><h4>Delivery company</h4><p>${h(order.courierCompany)}${order.courierReceiptReference ? `<br>Receipt ${h(order.courierReceiptReference)}` : ''}${order.courierDeliveredAt ? order.adminDeliveryApprovedAt ? '<br>Delivery verified by ShopVerse' : '<br>Receipt awaiting ShopVerse review' : ''}</p></div>` : ''}
               ${order.contactPhone ? `<div><h4>Customer phone</h4><p><a class="link" href="tel:${h(order.contactPhone.replace(/[^\d+]/g, ''))}">${h(order.contactPhone)}</a>${
                 order.whatsapp ? ` · <a class="link" target="_blank" rel="noopener" href="${h(whatsappChatUrl(order.whatsapp, `Hi ${order.customerName}, this is ${state.user.shopName} about your ShopVerse order #${shortId(order.id)}.`))}">WhatsApp</a>` : ''}</p></div>` : ''}
               <div><h4>Payment</h4><p>${h(PAYMENT_LABELS[order.paymentMethod] || order.paymentMethod)}</p></div>
@@ -2508,19 +2591,20 @@ async function viewAdmin({ id, query }) {
     viewNotFound();
     return;
   }
-  const tab = ['overview', 'sellers', 'payments'].includes(query.get('tab')) ? query.get('tab') : 'overview';
+  const tab = ['overview', 'sellers', 'payments', 'couriers'].includes(query.get('tab')) ? query.get('tab') : 'overview';
   setTitle('Admin');
   setView(loader);
 
-  const [overview, sellers, payments] = await Promise.all([
+  const [overview, sellers, payments, couriers] = await Promise.all([
     apiRequest('/api/admin/overview'),
     apiRequest('/api/admin/sellers'),
-    apiRequest('/api/admin/payments')
+    apiRequest('/api/admin/payments'),
+    apiRequest('/api/admin/couriers')
   ]);
   if (stale(id)) return;
-  state.admin = { metrics: overview.metrics, sellers: sellers.sellers, payments };
+  state.admin = { metrics: overview.metrics, sellers: sellers.sellers, payments, couriers };
   const m = overview.metrics;
-  const paymentTasks = payments.toConfirm.length + payments.payouts.length + payments.refunds.length + payments.disputes.length;
+  const paymentTasks = payments.toConfirm.length + payments.payouts.length + payments.refunds.length + payments.disputes.length + payments.deliveryConfirmations.length;
 
   setView(`
     <div class="container">
@@ -2532,6 +2616,7 @@ async function viewAdmin({ id, query }) {
         <a href="/admin?tab=overview" class="${tab === 'overview' ? 'active' : ''}">Overview</a>
         <a href="/admin?tab=sellers" class="${tab === 'sellers' ? 'active' : ''}">Sellers${m.pendingVerifications ? `<span class="tab-count">${m.pendingVerifications}</span>` : ''}</a>
         <a href="/admin?tab=payments" class="${tab === 'payments' ? 'active' : ''}">Payments${paymentTasks ? `<span class="tab-count">${paymentTasks}</span>` : ''}</a>
+        <a href="/admin?tab=couriers" class="${tab === 'couriers' ? 'active' : ''}">Delivery companies</a>
       </nav>
       <div id="adminPanel"></div>
     </div>`);
@@ -2539,6 +2624,7 @@ async function viewAdmin({ id, query }) {
   if (tab === 'overview') renderAdminOverview();
   if (tab === 'sellers') renderAdminSellers();
   if (tab === 'payments') renderAdminPayments();
+  if (tab === 'couriers') renderAdminCouriers();
 }
 
 function renderAdminOverview() {
@@ -2655,6 +2741,8 @@ function renderAdminPayments() {
     </section>`;
 
   $('#adminPanel').innerHTML = `
+    ${section('Courier delivery receipts', 'Review the courier company and receipt reference. Approval confirms delivery and makes eligible protected funds ready for manual payout.', p.deliveryConfirmations, (entry) => adminTaskCard(entry, `
+      <button type="button" class="button button-primary button-xs" data-action="admin-delivery-approve" data-id="${h(entry.orderId)}" data-shop="${h(entry.shopId)}">${icon('check')} Approve delivery</button>`, `<p class="dispute-reason">${h(entry.courierCompany)} receipt: ${h(entry.courierReceiptReference)}</p>`), 'No courier receipts waiting for review.')}
     ${section('Payments to confirm', 'Check that the money arrived in the ShopVerse account with this reference, then confirm.', p.toConfirm, (entry) => adminTaskCard(entry, `
       <button type="button" class="button button-primary button-xs" data-action="admin-payment" data-id="${h(entry.orderId)}" data-do="confirm">${icon('check')} Money received</button>
       <button type="button" class="button button-danger-ghost button-xs" data-action="admin-payment" data-id="${h(entry.orderId)}" data-do="reject">Not found</button>`), 'No payments waiting.')}
@@ -2666,8 +2754,43 @@ function renderAdminPayments() {
       <button type="button" class="button button-primary button-xs" data-action="admin-payout" data-id="${h(entry.orderId)}" data-shop="${h(entry.shopId)}">${icon('wallet')} Mark as paid</button>`), 'No payouts due.')}
     ${section('Refunds due', 'Cancelled after payment. Send the money back to the customer, then mark it refunded.', p.refunds, (entry) => adminTaskCard(entry, `
       <button type="button" class="button button-primary button-xs" data-action="admin-refund" data-id="${h(entry.orderId)}" data-shop="${h(entry.shopId)}">${icon('repeat')} Mark as refunded</button>`), 'No refunds due.')}
-    ${section('Held, waiting for delivery', 'Paid and protected. Released when the customer confirms, or automatically 3 days after delivery.', p.held, (entry) => adminTaskCard(entry, ''), 'Nothing held right now.')}
+    ${section('Held, waiting for delivery', 'Paid and protected. Standard deliveries release after customer confirmation or the protection period. Courier deliveries require receipt review.', p.held, (entry) => adminTaskCard(entry, ''), 'Nothing held right now.')}
     ${section('Awaiting payment', 'Orders placed but not paid yet.', p.awaiting, (entry) => adminTaskCard(entry, ''), 'No unpaid orders.')}`;
+}
+
+function renderAdminCouriers() {
+  const { couriers, companies } = state.admin.couriers;
+  $('#adminPanel').innerHTML = `
+    <section class="admin-section">
+      <div class="panel-head"><div><h2>Register a delivery company</h2><p>Create a secure courier login. Company names added here become selectable at checkout.</p></div></div>
+      <form class="card card-pad form-grid two" data-form="courier-account">
+        <label class="field"><span>Staff name</span><input type="text" name="name" maxlength="80" required /></label>
+        <label class="field"><span>Company name</span><input type="text" name="courierCompany" maxlength="80" list="courierCompanies" placeholder="Platinum, Mercury, or another company" required /></label>
+        <datalist id="courierCompanies">${companies.map((company) => `<option value="${h(company)}"></option>`).join('')}</datalist>
+        <label class="field"><span>Login email</span><input type="email" name="email" autocomplete="email" required /></label>
+        <label class="field"><span>Temporary password <span class="hint">· at least 8 characters</span></span><input type="password" name="password" minlength="8" autocomplete="new-password" required /></label>
+        <div class="form-actions full"><button type="submit" class="button button-primary">Create courier login</button></div>
+      </form>
+    </section>
+    <section class="admin-section">
+      <div class="panel-head"><div><h2>Courier accounts <span class="tab-count">${couriers.length}</span></h2><p>Each account can view and confirm deliveries assigned to its company only.</p></div></div>
+      ${couriers.length ? `<div class="order-list">${couriers.map((courier) => `
+        <article class="card admin-task"><div class="admin-task-main"><div><strong>${h(courier.courierCompany)}</strong><div class="meta-row"><span>${h(courier.name)}</span><span>${h(courier.email)}</span></div></div></div></article>`).join('')}</div>` : '<p class="muted admin-empty">No courier logins yet.</p>'}
+    </section>`;
+}
+
+async function submitCourierAccount(form) {
+  const button = form.querySelector('[type=submit]');
+  const data = Object.fromEntries(new FormData(form).entries());
+  try {
+    setBusy(button, true);
+    await apiRequest('/api/admin/couriers', { method: 'POST', body: data });
+    toast('Courier login created. Share the temporary password securely.', 'success');
+    render();
+  } catch (error) {
+    reportApiError(error);
+    setBusy(button, false);
+  }
 }
 
 async function promptText({ title, message, label, placeholder = '', confirmLabel = 'Save', required = false, danger = false }) {
@@ -2776,6 +2899,14 @@ async function adminAction(element) {
       body = { action: 'confirm' };
     }
     path = `/api/admin/orders/${encodeURIComponent(id)}/payment`;
+  } else if (action === 'admin-delivery-approve') {
+    const ok = await confirmDialog({
+      title: 'Approve courier delivery?',
+      message: 'Check the courier receipt reference before approval. This confirms delivery and may make the seller payout ready.',
+      confirmLabel: 'Approve delivery'
+    });
+    if (!ok) return;
+    path = `/api/admin/orders/${encodeURIComponent(id)}/shops/${encodeURIComponent(shop)}/delivery-approval`;
   } else if (action === 'admin-payout') {
     const reference = await promptText({ title: 'Mark payout as paid', message: 'Send the money to the seller first (for example by MoMo), then record it here.', label: 'Transfer reference (optional)', placeholder: 'e.g. MP240101.5678.B12345', confirmLabel: 'Mark as paid' });
     if (reference === null) return;
@@ -3169,6 +3300,9 @@ async function handleAction(action, element, event) {
     case 'confirm-receipt':
       confirmReceipt(element.dataset.id, element.dataset.shop);
       break;
+    case 'courier-confirm':
+      submitCourierReceipt(element.dataset.id, element.dataset.shop);
+      break;
     case 'open-dispute':
       openDispute(element.dataset.id, element.dataset.shop, element.dataset.shopName);
       break;
@@ -3209,6 +3343,7 @@ function handleSubmit(event) {
   const handlers = {
     login: () => submitAuth(form, 'login'),
     register: () => submitAuth(form, 'register'),
+    'courier-account': () => submitCourierAccount(form),
     checkout: () => submitCheckout(form),
     product: () => submitProduct(form),
     'shop-profile': () => submitShopProfile(form),

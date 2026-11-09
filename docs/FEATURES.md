@@ -23,6 +23,11 @@ has their order.
 5. **Release.** The payout becomes ready when either:
    - the buyer taps **I received it**, or
    - 3 days pass after the seller marked it delivered with no problem reported.
+  For courier deliveries, the buyer selects the company at checkout. A company
+  courier login submits the delivery receipt/reference; a ShopVerse admin must
+  review and approve it. Customer confirmation and automatic release are disabled
+  for these deliveries. This is an in-app confirmation workflow, not a live courier
+  API integration.
 6. **Pay out.** The admin sends the seller their money (minus any commission) and
    taps **Mark as paid**.
 
@@ -75,9 +80,17 @@ Each seller sets the following in **Studio → Shop profile → Delivery & picku
 - **Pickup**: buyers can collect from the shop for free.
 
 At checkout the buyer picks **delivery** or **pickup** for each shop in their cart.
-Fees and the total update instantly. A delivery address is only required when at
-least one shop is delivering. The shop's terms also appear on its storefront, shop
-card and product pages.
+For delivery, the buyer also selects a courier company (Platinum, Mercury, or a
+company added by an admin). Fees and the total update instantly. A delivery address
+is only required when at least one shop is delivering. The shop's terms also appear
+on its storefront, shop card and product pages.
+
+Admins create courier logins under **Admin → Delivery companies**. A courier can
+only see deliveries assigned to its company, and must submit a receipt/reference
+after the seller marks the order shipped. The receipt appears under **Admin →
+Payments → Courier delivery receipts**. Admin approval makes a protected payout
+eligible for the existing manual payout process. Courier deliveries never use the
+customer-confirmation or automatic three-day release path.
 
 ## Verified sellers
 
@@ -164,9 +177,12 @@ is in `SHOPVERSE_ADMIN_EMAILS`.
 | Method & path | Who | What |
 |---|---|---|
 | `GET /api/payment-info` | Anyone | The accounts buyers pay into, and the protection period |
+| `GET /api/couriers` | Anyone | Courier companies available at checkout |
 | `POST /api/orders/:id/payment` | Customer | Submit the transaction ID (`{ transactionId }`) |
-| `POST /api/orders/:id/confirm` | Customer | Confirm receipt (`{ shopId? }`); releases that shop's payout |
+| `POST /api/orders/:id/confirm` | Customer | Confirm receipt for non-courier deliveries (`{ shopId? }`) |
 | `POST /api/orders/:id/dispute` | Customer | Report a problem (`{ shopId, reason }`); freezes the payout |
+| `GET /api/courier/deliveries` | Courier | List shipped orders assigned to the courier's company |
+| `POST /api/courier/orders/:id/shops/:shopId/delivered` | Courier | Submit delivery receipt (`{ receiptReference }`) |
 | `POST /api/me/verification` | Shop owner | Request verification (`{ businessName, idNumber, phone, note? }`) |
 | `PATCH /api/me` | Shop owner | Also accepts `shopPhone` and `delivery: { enabled, fee, freeOver, areas, pickup }` |
 | `POST /api/orders` | Customer | Also accepts `fulfilment: { [shopId]: 'delivery' \| 'pickup' }` |
@@ -177,6 +193,9 @@ is in `SHOPVERSE_ADMIN_EMAILS`.
 | `POST /api/admin/sellers/:shopId/unsuspend` | Admin | Lift a suspension |
 | `DELETE /api/admin/sellers/:shopId` | Admin | Permanently delete the shop and seller account (`{ confirmName }`); refused while orders are unsettled |
 | `GET /api/admin/payments` | Admin | Payment and payout work queues |
+| `GET /api/admin/couriers` | Admin | Courier companies and logins |
+| `POST /api/admin/couriers` | Admin | Create a courier login (`{ name, email, password, courierCompany }`) |
+| `POST /api/admin/orders/:id/shops/:shopId/delivery-approval` | Admin | Approve a courier delivery receipt |
 | `POST /api/admin/orders/:id/payment` | Admin | `{ action: 'confirm' \| 'reject', note? }` |
 | `POST /api/admin/orders/:id/shops/:shopId/payout` | Admin | Mark a payout as sent (`{ reference? }`) |
 | `POST /api/admin/orders/:id/shops/:shopId/refund` | Admin | Mark a refund as sent |
